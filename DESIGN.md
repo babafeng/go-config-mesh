@@ -237,7 +237,7 @@ config-mesh version            # 查看版本信息
 
 ## 7. 技术栈清单
 
-- **编程语言**：Go 1.25.13 或更高补丁版本（与 `go.mod` 的安全下限一致）
+- **编程语言**：Go 1.27.1 或更高版本（与 `go.mod` 的版本声明一致）
 - **CLI 框架**：`github.com/spf13/cobra` + `github.com/spf13/pflag`
 - **TUI 交互**：`github.com/charmbracelet/bubbletea` + `bubbles` + `lipgloss`
 - **加密体系**：`filippo.io/age`（含 `filippo.io/age/agessh` 原生 SSH 密钥支持）
