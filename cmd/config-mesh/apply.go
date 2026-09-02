@@ -257,11 +257,6 @@ func handleUpload(repoDir string, gitMgr *git.RepositoryManager, vaultID string)
 		fmt.Println("[*] 未选择任何存在的配置项，上传已取消。")
 		return nil
 	}
-	if !yesFlag {
-		if err := confirmSensitiveItems(toUpload, "上传"); err != nil {
-			return err
-		}
-	}
 
 	return uploadConfigItems(repoDir, gitMgr, vaultID, toUpload, selectedItems, "sync: update", false)
 }
@@ -294,8 +289,8 @@ func autoBackupAndUploadLocal(repoDir string, gitMgr *git.RepositoryManager, vau
 
 	var toUpload []model.ConfigItem
 	for _, item := range items {
-		// 自动备份选取本机存在的推荐项，并排除需要交互式输入的显式凭据
-		if item.Exists && item.Recommended && item.SecretKind == "" {
+		// 自动备份选取本机存在的推荐项
+		if item.Exists && item.Recommended {
 			item.Selected = true
 			toUpload = append(toUpload, item)
 		}
@@ -710,9 +705,6 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 			fmt.Println("[*] 未选择任何配置项，同步已取消。")
 			return nil
 		}
-		if err := confirmSensitiveItems(toApply, "下载并覆盖本机"); err != nil {
-			return err
-		}
 
 		// 2. 先选择策略并验证所有项是否支持，取消不得默认改写配置。
 		strategy, err = tui.RunStrategySelector()
@@ -841,35 +833,6 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 type decryptedConfig struct {
 	item model.ConfigItem
 	data []byte
-}
-
-func confirmSensitiveItems(items []model.ConfigItem, action string) error {
-	return confirmSensitiveItemsFrom(items, action, os.Stdin, os.Stdout)
-}
-
-func confirmSensitiveItemsFrom(items []model.ConfigItem, action string, reader io.Reader, writer io.Writer) error {
-	var sensitive []model.ConfigItem
-	for _, item := range items {
-		if item.SecretKind != "" {
-			sensitive = append(sensitive, item)
-		}
-	}
-	if len(sensitive) == 0 {
-		return nil
-	}
-	fmt.Fprintf(writer, "\n[!] 本次将%s %d 个凭据文件:\n", action, len(sensitive))
-	for _, item := range sensitive {
-		fmt.Fprintf(writer, "  - %s [%s]\n", item.Name, item.SecretKind)
-	}
-	fmt.Fprint(writer, "请输入 SYNC-SECRETS 确认（其他输入取消）: ")
-	input := bufio.NewScanner(reader)
-	if !input.Scan() {
-		return fmt.Errorf("未确认凭据操作")
-	}
-	if strings.TrimSpace(input.Text()) != "SYNC-SECRETS" {
-		return fmt.Errorf("凭据操作已取消")
-	}
-	return nil
 }
 
 func readRegularFileBounded(filePath string, maxBytes int64) ([]byte, error) {

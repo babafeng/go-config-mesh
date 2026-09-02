@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
@@ -37,27 +36,6 @@ func TestReadRegularFileBounded(t *testing.T) {
 	}
 	if _, err := readRegularFileBounded(link, 10); err == nil {
 		t.Fatal("不得读取仓库中的软链接负载")
-	}
-}
-
-func TestConfirmSensitiveItemsRequiresExactPhrase(t *testing.T) {
-	items := []model.ConfigItem{{Name: "AWS Credentials", SecretKind: model.SecretKindAWSCredentials}}
-	for _, tc := range []struct {
-		input string
-		ok    bool
-	}{
-		{input: "SYNC-SECRETS\n", ok: true},
-		{input: "yes\n"},
-		{input: ""},
-	} {
-		var output bytes.Buffer
-		err := confirmSensitiveItemsFrom(items, "上传", strings.NewReader(tc.input), &output)
-		if (err == nil) != tc.ok {
-			t.Errorf("input=%q ok=%v err=%v output=%q", tc.input, tc.ok, err, output.String())
-		}
-	}
-	if err := confirmSensitiveItemsFrom([]model.ConfigItem{{Name: "ordinary"}}, "上传", strings.NewReader(""), &bytes.Buffer{}); err != nil {
-		t.Fatalf("普通配置不应要求额外确认: %v", err)
 	}
 }
 
