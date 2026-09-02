@@ -50,15 +50,15 @@ flowchart TB
 
 ### 模块职责说明
 
-| 模块 | 包路径 | 核心职责 |
-| :--- | :--- | :--- |
-| **CLI 入口** | `cmd/` | 命令解析、参数校验、流程串联与上下文管理 |
-| **GitHub 管理** | `internal/github` | `GITHUB_TOKEN` / `GH_TOKEN` / `gh` / Keychain 认证，校验并创建私有仓库 |
-| **加密与密钥** | `internal/crypto` | SSH 多接收者 age 加密、加密私钥解锁与 `recipients.pub` 管理 |
-| **配置扫描** | `internal/scanner` | macOS 常见配置探测、SSH/云凭据发现、受控凭据白名单与普通敏感文件拦截 |
-| **TUI 界面** | `internal/tui` | 滚动视口、分类三态总复选框、差异徽章、按需勾选与策略选择 |
-| **Git 引擎** | `internal/git` | 本地仓库克隆/初始化、Commit、Push、Pull、稳定设备目录暂存与原子替换 |
-| **同步与备份** | `internal/sync` | 不存在状态备份、负载/路径验证、原子目录替换、JSON 合并和失败回滚 |
+| 模块            | 包路径             | 核心职责                                                               |
+| :-------------- | :----------------- | :--------------------------------------------------------------------- |
+| **CLI 入口**    | `cmd/`             | 命令解析、参数校验、流程串联与上下文管理                               |
+| **GitHub 管理** | `internal/github`  | `GITHUB_TOKEN` / `GH_TOKEN` / `gh` / Keychain 认证，校验并创建私有仓库 |
+| **加密与密钥**  | `internal/crypto`  | SSH 多接收者 age 加密、加密私钥解锁与 `recipients.pub` 管理            |
+| **配置扫描**    | `internal/scanner` | macOS 常见配置探测、SSH/云凭据发现、受控凭据白名单与普通敏感文件拦截   |
+| **TUI 界面**    | `internal/tui`     | 滚动视口、分类三态总复选框、差异徽章、按需勾选与策略选择               |
+| **Git 引擎**    | `internal/git`     | 本地仓库克隆/初始化、Commit、Push、Pull、稳定设备目录暂存与原子替换    |
+| **同步与备份**  | `internal/sync`    | 不存在状态备份、负载/路径验证、原子目录替换、JSON 合并和失败回滚       |
 
 本地差异基线按 `owner/repository` 隔离保存为 `~/.config-mesh/states/<vault-sha256>.json`。该 JSON 哈希表记录设备 ID、稳定上传目录、每项选择状态、本地/远端/负载哈希及最近同步时间；`active-vault` 仅指向最近成功同步的 vault，避免切换仓库时沿用另一仓库的哈希和删除记录。
 
@@ -164,9 +164,9 @@ sequenceDiagram
 - `ssh_private_key`：仅允许 `~/.ssh/` 直属的可解析 SSH 私钥；排除 `authorized_keys`、`known_hosts`、`config`，并同时发现对应 `.pub` 文件。
 - `aws_credentials`：仅允许 `~/.aws/credentials`，要求包含 Access Key ID 与 Secret Access Key 字段。
 - `aliyun_config`：仅允许 `~/.aliyun/config.json`，要求是有效的非空 JSON 对象。
-- `detected_config_secret`：仅允许扫描器内置的普通单文件预设（例如 `~/.zshrc`）；内容必须实际命中凭据检测。它不会再被扫描器静默丢弃。
+- `detected_config_secret`：仅允许扫描器内置的普通单文件预设（例如 `~/.zshrc`）以及受管的 Claude Code 各环境配置（`~/.claude/settings.json*`）；内容必须实际命中凭据检测。它不会再被扫描器静默丢弃。
 
-显式凭据项默认不勾选；检测到凭据的推荐配置（例如 `~/.zshrc`）保留其推荐选择状态。所有敏感项上传和下载均需输入 `SYNC-SECRETS` 二次确认，只能使用 overwrite，落盘权限强制为 `0600`。未列入预设或白名单的 `.env*`、kubeconfig、GPG 私钥和证书私钥仍被拒绝。
+显式凭据项默认不勾选（带有 `[!凭据·默认不选]` 标记）；检测到凭据的推荐配置（例如 `~/.zshrc` 及 Claude 配置）保留其推荐选择状态。所有选中的敏感项均由本地 SSH 私钥通过 Age 加密后直接安全上传，落盘权限强制为 `0600`。未列入预设或白名单的非法路径、`.env*`、kubeconfig、GPG 私钥和证书私钥仍被严格拒绝。
 
 ### 4.4 交互挑选、差异同步与合并策略 (`internal/sync`)
 
@@ -179,7 +179,7 @@ sequenceDiagram
 3. **差异合并策略**：
 
 | 配置类型 | 示例 | 可选追加/合并行为 | 默认覆盖行为 |
-| :--- | :--- | :--- | :--- |
+| :------- | :--- | :---------------- | :----------- |****
 | **纯文本/Shell 脚本** | `.zshrc`, `.bashrc` | **锚点标记块追加**：<br>`# >>> config-mesh start >>>`<br>`...内容...`<br>`# <<< config-mesh end <<<`<br>再次同步时只更新标记块，不产生重复 | 全量覆盖原文件 |
 | **JSON 数据** | `settings.json` | **Key-Value 深度合并（Deep Merge）**：保留本地特有键，合并远端键；解析失败会中止 | 全量覆盖原文件 |
 | **目录级配置** | `~/.config/nvim/` | **差异增量同步**：新增缺失文件，保留本地特有文件 | 清空后整体替换为云端版本 |
@@ -222,8 +222,8 @@ config-mesh-vault/ (私有仓库)
 基于 `cobra` 构建清晰的命令体系：
 
 ```bash
-# 核心一键命令 (自动检测初次上传或多端合并)
-config-mesh apply [github_username]
+# 核心一键命令 (自动检测初次上传或多端合并，可选 -y 非交互直接同步)
+config-mesh apply [github_username] [-y]
 
 # 辅助子命令
 config-mesh scan               # 仅扫描并输出本地可同步项

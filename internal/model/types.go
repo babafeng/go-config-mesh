@@ -21,7 +21,7 @@ const (
 	SecretKindAWSCredentials SecretKind = "aws_credentials"
 	SecretKindAliyunConfig   SecretKind = "aliyun_config"
 	// SecretKindDetectedConfig 表示预设配置文件中检测到了凭据内容。
-	// 这类文件仍可加密同步，但会进入凭据确认流程并强制使用 0600 权限。
+	// 这类文件仍可受控加密同步，并在落盘时强制使用 0600 权限保护。
 	SecretKindDetectedConfig SecretKind = "detected_config_secret"
 )
 
