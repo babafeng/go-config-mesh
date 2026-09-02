@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 
 	"config-mesh/internal/crypto"
@@ -24,7 +26,6 @@ var DefaultPresets = []struct {
 }{
 	// ==================== 1. AI 助手 & 命令行工具 ====================
 	{ID: "ai_claude_json", Name: "Claude Code (~/.claude.json)", Category: model.CategoryAI, RelHomePath: ".claude.json", VaultFile: "claude_root.json.age", IsDir: false, Recommended: true},
-	{ID: "ai_claude_settings", Name: "Claude Code Settings (~/.claude/settings.json)", Category: model.CategoryAI, RelHomePath: ".claude/settings.json", VaultFile: "claude_settings.json.age", IsDir: false, Recommended: true},
 	{ID: "ai_claude_md", Name: "Claude Code Guidelines (~/.claude/CLAUDE.md)", Category: model.CategoryAI, RelHomePath: ".claude/CLAUDE.md", VaultFile: "claude_md.age", IsDir: false, Recommended: true},
 	{ID: "ai_claude_commands", Name: "Claude Code Commands (~/.claude/commands)", Category: model.CategoryAI, RelHomePath: ".claude/commands", VaultFile: "claude_commands.tar.age", IsDir: true, Recommended: true},
 	{ID: "ai_codex_config", Name: "Codex Config (~/.codex/config.toml)", Category: model.CategoryAI, RelHomePath: ".codex/config.toml", VaultFile: "codex_config.toml.age", IsDir: false, Recommended: true},
@@ -171,6 +172,22 @@ func (s *Scanner) Scan() ([]model.ConfigItem, error) {
 		items = append(items, item)
 	}
 
+	claudeItems, err := s.scanClaudeSettingsFiles()
+	if err != nil {
+		return nil, err
+	}
+	if len(claudeItems) > 0 {
+		insertAt := 0
+		for i, item := range items {
+			if item.Category == model.CategoryAI {
+				insertAt = i + 1
+			}
+		}
+		items = append(items, make([]model.ConfigItem, len(claudeItems))...)
+		copy(items[insertAt+len(claudeItems):], items[insertAt:len(items)-len(claudeItems)])
+		copy(items[insertAt:], claudeItems)
+	}
+
 	sshKeyItems, err := s.scanSSHKeyFiles()
 	if err != nil {
 		return nil, err
@@ -293,6 +310,93 @@ func CalculateDirSize(dirPath string) int64 {
 		return nil
 	})
 	return totalSize
+}
+
+func (s *Scanner) scanClaudeSettingsFiles() ([]model.ConfigItem, error) {
+	claudeDir := filepath.Join(s.HomeDir, ".claude")
+	entries, err := os.ReadDir(claudeDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("读取 ~/.claude 目录失败: %w", err)
+	}
+
+	var items []model.ConfigItem
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !IsClaudeSettingsFilename(name) {
+			continue
+		}
+		filePath := filepath.Join(claudeDir, name)
+		info, err := os.Lstat(filePath)
+		if err != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > MaxContentInspectionBytes {
+			continue
+		}
+
+		relPath := filepath.ToSlash(filepath.Join(".claude", name))
+		secretKind := model.SecretKind("")
+		sensitive, inspectErr := FileContainsSensitiveContent(filePath)
+		if inspectErr != nil {
+			return nil, fmt.Errorf("检查配置内容失败 (%s): %w", name, inspectErr)
+		}
+		if sensitive {
+			secretKind = model.SecretKindDetectedConfig
+		}
+
+		id := "ai_claude_" + sanitizePresetID(name)
+		vaultFile := "claude_" + sanitizeVaultFilename(name) + ".age"
+
+		item := model.ConfigItem{
+			ID:          id,
+			Name:        fmt.Sprintf("Claude Code Settings (~/.claude/%s)", name),
+			Category:    model.CategoryAI,
+			LocalPath:   filePath,
+			RelHomePath: relPath,
+			VaultFile:   vaultFile,
+			IsDir:       false,
+			Recommended: true,
+			Exists:      true,
+			Selected:    true,
+			FileMode:    uint32(info.Mode().Perm()),
+			Size:        info.Size(),
+			SecretKind:  secretKind,
+		}
+		if item.SecretKind != "" {
+			item.FileMode = 0600
+		}
+		if hash, err := crypto.CalculateFileSHA256(filePath); err == nil {
+			item.ContentHash = hash
+		}
+
+		items = append(items, item)
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].RelHomePath < items[j].RelHomePath
+	})
+
+	return items, nil
+}
+
+var nonAlphaNumRegex = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
+
+func sanitizePresetID(name string) string {
+	cleaned := nonAlphaNumRegex.ReplaceAllString(name, "_")
+	cleaned = strings.Trim(cleaned, "_")
+	if cleaned == "settings_json" || cleaned == "settings" {
+		return "settings"
+	}
+	return cleaned
+}
+
+func sanitizeVaultFilename(name string) string {
+	cleaned := nonAlphaNumRegex.ReplaceAllString(name, "_")
+	cleaned = strings.Trim(cleaned, "_")
+	if cleaned == "settings_json" || cleaned == "settings" {
+		return "settings.json"
+	}
+	return cleaned
 }
 
 // FormatSize 人性化格式化字节大小 (如 512 B, 12.4 KB, 3.2 MB, 1.1 GB)

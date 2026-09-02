@@ -145,17 +145,50 @@ func IsAllowedSecretConfigPath(relHomePath string, isDir bool, kind model.Secret
 		}
 		return safeSecretFilename.MatchString(base)
 	case model.SecretKindDetectedConfig:
-		// 只允许扫描器内置的普通单文件预设升级为“检测到凭据”的配置。
+		// 只允许扫描器内置的普通单文件预设或受管动态配置升级为“检测到凭据”的配置。
 		// 远端不能靠伪造 secret_kind 绕过任意敏感路径限制。
 		for _, preset := range DefaultPresets {
 			if !preset.IsDir && preset.SecretKind == "" && filepath.ToSlash(filepath.Clean(preset.RelHomePath)) == rel {
 				return true
 			}
 		}
+		if IsClaudeSettingsRelPath(rel, isDir) {
+			return true
+		}
 		return false
 	default:
 		return false
 	}
+}
+
+// IsClaudeSettingsFilename 判断文件名是否属于 Claude Code 的 settings.json* 或 settings*.json 配置文件
+func IsClaudeSettingsFilename(name string) bool {
+	if !safeSecretFilename.MatchString(name) {
+		return false
+	}
+	lower := strings.ToLower(name)
+	if lower == "settings.json" ||
+		strings.HasPrefix(lower, "settings.json.") ||
+		(strings.HasPrefix(lower, "settings.") && strings.HasSuffix(lower, ".json")) ||
+		(strings.HasPrefix(lower, "settings-") && strings.HasSuffix(lower, ".json")) ||
+		(strings.HasPrefix(lower, "settings_") && strings.HasSuffix(lower, ".json")) ||
+		(strings.HasPrefix(lower, "setting") && strings.Contains(lower, ".json")) {
+		return true
+	}
+	return false
+}
+
+// IsClaudeSettingsRelPath 检查相对路径是否为合法的 Claude settings 文件
+func IsClaudeSettingsRelPath(relHomePath string, isDir bool) bool {
+	if isDir {
+		return false
+	}
+	rel := filepath.ToSlash(filepath.Clean(relHomePath))
+	if !strings.HasPrefix(rel, ".claude/") || strings.Count(rel, "/") != 1 {
+		return false
+	}
+	base := strings.TrimPrefix(rel, ".claude/")
+	return IsClaudeSettingsFilename(base)
 }
 
 // FileContainsSensitiveContent 对实际要同步的普通文件做保守的凭据内容检测。

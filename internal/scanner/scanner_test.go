@@ -277,3 +277,75 @@ func TestFormatSize(t *testing.T) {
 		}
 	}
 }
+
+func TestScanClaudeSettingsFiles(t *testing.T) {
+	home := t.TempDir()
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	testFiles := map[string]string{
+		"settings.json":          `{"model":"default"}`,
+		"settings.json.xiaomi":   `{"model":"xiaomi"}`,
+		"settings.json.opencode": `{"model":"opencode"}`,
+		"settings.json.bai":      `{"model":"bai"}`,
+		"settings.json.gmi":      `{"model":"gmi"}`,
+		"settings.json.chatgpt":  `{"model":"chatgpt"}`,
+		"settings.local.json":    `{"local":true}`,
+		"CLAUDE.md":              `# Guidelines`,
+		"unrelated.log":          `some logs`,
+	}
+
+	for filename, content := range testFiles {
+		if err := os.WriteFile(filepath.Join(claudeDir, filename), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := &Scanner{HomeDir: home}
+	items, err := s.Scan()
+	if err != nil {
+		t.Fatalf("Scan 失败: %v", err)
+	}
+
+	foundMap := make(map[string]model.ConfigItem)
+	for _, item := range items {
+		if item.Category == model.CategoryAI {
+			foundMap[item.RelHomePath] = item
+		}
+	}
+
+	expectedPaths := []string{
+		".claude/settings.json",
+		".claude/settings.json.xiaomi",
+		".claude/settings.json.opencode",
+		".claude/settings.json.bai",
+		".claude/settings.json.gmi",
+		".claude/settings.json.chatgpt",
+		".claude/settings.local.json",
+		".claude/CLAUDE.md",
+	}
+
+	for _, expected := range expectedPaths {
+		item, exists := foundMap[expected]
+		if !exists {
+			t.Errorf("未扫描到期望的 Claude 配置文件: %s", expected)
+			continue
+		}
+		if !item.Recommended || !item.Selected || !item.Exists {
+			t.Errorf("配置项状态不符合预期: %+v", item)
+		}
+		if item.VaultFile == "" || item.ID == "" {
+			t.Errorf("配置项 ID 或 VaultFile 为空: %+v", item)
+		}
+		// 校验白名单判定
+		if !IsAllowedSecretConfigPath(item.RelHomePath, false, model.SecretKindDetectedConfig) {
+			t.Errorf("IsAllowedSecretConfigPath 应允许 Claude settings 路径: %s", item.RelHomePath)
+		}
+	}
+
+	if _, exists := foundMap[".claude/unrelated.log"]; exists {
+		t.Errorf("不应扫描非 settings/预设文件: .claude/unrelated.log")
+	}
+}
