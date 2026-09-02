@@ -1,0 +1,22 @@
+# Binaries
+/config-mesh
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# macOS files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Local runtime directories
+.config-mesh/
+tmp/
