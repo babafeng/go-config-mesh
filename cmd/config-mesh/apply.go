@@ -28,6 +28,11 @@ import (
 )
 
 var repoComponentPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
+var yesFlag bool
+
+func init() {
+	applyCmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "非交互模式：自动采用默认推荐配置执行同步，跳过 TUI 确认")
+}
 
 var applyCmd = &cobra.Command{
 	Use:   "apply [github_username]",
@@ -146,41 +151,50 @@ var applyCmd = &cobra.Command{
 				mode = "download"
 			}
 
-			fmt.Println("\n请选择本次执行的操作：")
-			fmt.Println("  1. 从云端拉取配置并合并到当前设备 (推荐用于新设备同步)")
-			fmt.Println("  2. 将当前设备配置更新到本机固定目录（仅上传变化项）")
-			defaultOperation := "2"
-			if defaultDownloadIndex >= 0 {
-				defaultOperation = "1"
-			}
-			fmt.Printf("请输入序号 [1/2] (默认 %s): ", defaultOperation)
+			if !yesFlag {
+				fmt.Println("\n请选择本次执行的操作：")
+				fmt.Println("  1. 从云端拉取配置并合并到当前设备 (推荐用于新设备同步)")
+				fmt.Println("  2. 将当前设备配置更新到本机固定目录（仅上传变化项）")
+				defaultOperation := "2"
+				if defaultDownloadIndex >= 0 {
+					defaultOperation = "1"
+				}
+				fmt.Printf("请输入序号 [1/2] (默认 %s): ", defaultOperation)
 
-			scannerInput := bufio.NewScanner(os.Stdin)
-			if scannerInput.Scan() {
-				input := strings.TrimSpace(scannerInput.Text())
-				if input == "2" {
-					mode = "upload"
-				} else if input == "1" {
-					mode = "download"
-				}
-			}
-			if mode == "download" {
-				if defaultDownloadIndex < 0 {
-					defaultDownloadIndex = 0
-				}
-				fmt.Printf("请选择要拉取的快照 [1-%d] (默认 %d): ", len(snapshots), defaultDownloadIndex+1)
-				selectedIndex := defaultDownloadIndex
+				scannerInput := bufio.NewScanner(os.Stdin)
 				if scannerInput.Scan() {
 					input := strings.TrimSpace(scannerInput.Text())
-					if input != "" {
-						parsed, err := strconv.Atoi(input)
-						if err != nil || parsed < 1 || parsed > len(snapshots) {
-							return fmt.Errorf("快照序号无效: %q", input)
-						}
-						selectedIndex = parsed - 1
+					if input == "2" {
+						mode = "upload"
+					} else if input == "1" {
+						mode = "download"
 					}
 				}
-				selectedSnapshot = snapshots[selectedIndex].SnapshotID
+				if mode == "download" {
+					if defaultDownloadIndex < 0 {
+						defaultDownloadIndex = 0
+					}
+					fmt.Printf("请选择要拉取的快照 [1-%d] (默认 %d): ", len(snapshots), defaultDownloadIndex+1)
+					selectedIndex := defaultDownloadIndex
+					if scannerInput.Scan() {
+						input := strings.TrimSpace(scannerInput.Text())
+						if input != "" {
+							parsed, err := strconv.Atoi(input)
+							if err != nil || parsed < 1 || parsed > len(snapshots) {
+								return fmt.Errorf("快照序号无效: %q", input)
+							}
+							selectedIndex = parsed - 1
+						}
+					}
+					selectedSnapshot = snapshots[selectedIndex].SnapshotID
+				}
+			} else {
+				if mode == "download" {
+					if defaultDownloadIndex < 0 {
+						defaultDownloadIndex = 0
+					}
+					selectedSnapshot = snapshots[defaultDownloadIndex].SnapshotID
+				}
 			}
 		}
 
@@ -221,10 +235,15 @@ func handleUpload(repoDir string, gitMgr *git.RepositoryManager, vaultID string)
 		return err
 	}
 
-	// 启动 TUI 复选框界面
-	selectedItems, err := tui.RunCheckboxTUI("📤 选择需要加密并上传同步的本地配置项", items)
-	if err != nil {
-		return err
+	var selectedItems []model.ConfigItem
+	if !yesFlag {
+		var err error
+		selectedItems, err = tui.RunCheckboxTUI("📤 选择需要加密并上传同步的本地配置项", items)
+		if err != nil {
+			return err
+		}
+	} else {
+		selectedItems = items
 	}
 
 	var toUpload []model.ConfigItem
@@ -238,8 +257,10 @@ func handleUpload(repoDir string, gitMgr *git.RepositoryManager, vaultID string)
 		fmt.Println("ℹ️ 未选择任何存在的配置项，上传已取消。")
 		return nil
 	}
-	if err := confirmSensitiveItems(toUpload, "上传"); err != nil {
-		return err
+	if !yesFlag {
+		if err := confirmSensitiveItems(toUpload, "上传"); err != nil {
+			return err
+		}
 	}
 
 	return uploadConfigItems(repoDir, gitMgr, vaultID, toUpload, selectedItems, "sync: update", false)
@@ -670,35 +691,50 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 		return err
 	}
 
-	// 1. TUI 让用户勾选挑选想要同步的配置项
-	selectedItems, err := tui.RunCheckboxTUI("📥 请勾选想要从云端同步到本机的配置项", remoteManifest.Items)
-	if err != nil {
-		return err
-	}
-
 	var toApply []model.ConfigItem
-	for _, item := range selectedItems {
-		if item.Selected {
-			toApply = append(toApply, item)
+	var strategy model.Strategy
+	if !yesFlag {
+		// 1. TUI 让用户勾选挑选想要同步的配置项
+		selectedItems, err := tui.RunCheckboxTUI("📥 请勾选想要从云端同步到本机的配置项", remoteManifest.Items)
+		if err != nil {
+			return err
 		}
-	}
 
-	if len(toApply) == 0 {
-		fmt.Println("ℹ️ 未选择任何配置项，同步已取消。")
-		return nil
-	}
-	if err := confirmSensitiveItems(toApply, "下载并覆盖本机"); err != nil {
-		return err
-	}
+		for _, item := range selectedItems {
+			if item.Selected {
+				toApply = append(toApply, item)
+			}
+		}
 
-	// 2. 先选择策略并验证所有项是否支持，取消不得默认改写配置。
-	strategy, err := tui.RunStrategySelector()
-	if err != nil {
-		return err
-	}
-	if strategy == model.StrategySkip {
-		fmt.Println("ℹ️ 已选择跳过，本地配置和同步状态均未修改。")
-		return nil
+		if len(toApply) == 0 {
+			fmt.Println("ℹ️ 未选择任何配置项，同步已取消。")
+			return nil
+		}
+		if err := confirmSensitiveItems(toApply, "下载并覆盖本机"); err != nil {
+			return err
+		}
+
+		// 2. 先选择策略并验证所有项是否支持，取消不得默认改写配置。
+		strategy, err = tui.RunStrategySelector()
+		if err != nil {
+			return err
+		}
+		if strategy == model.StrategySkip {
+			fmt.Println("ℹ️ 已选择跳过，本地配置和同步状态均未修改。")
+			return nil
+		}
+	} else {
+		for _, item := range remoteManifest.Items {
+			if item.Recommended {
+				toApply = append(toApply, item)
+			}
+		}
+		if len(toApply) == 0 {
+			fmt.Println("ℹ️ 未选择任何配置项，同步已取消。")
+			return nil
+		}
+		strategy = model.StrategyOverwrite
+		fmt.Printf("⚙️ 应用策略 (非交互默认): %s\n", strategy)
 	}
 	for _, item := range toApply {
 		if err := sync.ValidateApplyStrategy(item, strategy); err != nil {
