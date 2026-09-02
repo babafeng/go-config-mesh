@@ -73,7 +73,7 @@ var applyCmd = &cobra.Command{
 		}
 
 		fmt.Printf(":: 当前 GitHub 用户: %s\n", tui.SelectedStyle.Render(targetUsername))
-		fmt.Printf(":: 检查/创建私有仓库 [%s]...\n", tui.HighlightColor)
+		fmt.Printf(":: 检查/创建私有仓库 [%s]...\n", tui.SelectedStyle.Render(RepoName))
 
 		repo, err := ghClient.EnsurePrivateRepo(targetUsername, RepoName)
 		if err != nil {
