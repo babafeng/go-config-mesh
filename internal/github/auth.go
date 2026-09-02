@@ -45,9 +45,9 @@ func (am *AuthManager) GetToken(username string) (string, error) {
 	}
 
 	// 4. 若未找到，引导用户在终端输入
-	fmt.Printf("\n🔑 未检测到 GitHub 认证 (未找到 gh cli 登录凭据或本地 Keychain)。\n")
+	fmt.Printf("\n[!] 未检测到 GitHub 认证 (未找到 gh cli 登录凭据或本地 Keychain)。\n")
 	fmt.Printf("请提供 GitHub Personal Access Token (需要具备 'repo' 权限以创建和管理私有仓库):\n")
-	fmt.Printf("👉 创建链接: https://github.com/settings/tokens/new?scopes=repo&description=config-mesh\n\n")
+	fmt.Printf("-> 创建链接: https://github.com/settings/tokens/new?scopes=repo&description=config-mesh\n\n")
 	fmt.Print("请输入 GitHub Token（输入不会回显）: ")
 
 	var inputToken string
@@ -70,7 +70,7 @@ func (am *AuthManager) GetToken(username string) (string, error) {
 		if err := keyring.Set(KeyringService, KeyringUser, inputToken); err != nil {
 			return "", fmt.Errorf("保存 Token 到系统钥匙串失败: %w", err)
 		}
-		fmt.Println("✅ Token 已安全保存在 macOS Keychain 钥匙串中。")
+		fmt.Println("[ok] Token 已安全保存在 macOS Keychain 钥匙串中。")
 		return inputToken, nil
 	}
 

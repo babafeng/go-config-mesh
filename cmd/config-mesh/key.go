@@ -78,17 +78,17 @@ var keyAddCmd = &cobra.Command{
 			return err
 		}
 		if !added {
-			fmt.Printf("ℹ️ 该公钥已在 recipients.pub 中: %s\n", fingerprint)
+			fmt.Printf("[*] 该公钥已在 recipients.pub 中: %s\n", fingerprint)
 		}
 		if err := manager.CommitAndPush("keys: add recipient "+fingerprint, "recipients.pub"); err != nil {
 			return err
 		}
 		if !added {
-			fmt.Println("✅ 已确认本地接收者变更全部推送至远端。")
+			fmt.Println("[ok] 已确认本地接收者变更全部推送至远端。")
 			return nil
 		}
-		fmt.Printf("✅ 已添加新设备接收者: %s\n", fingerprint)
-		fmt.Println("下一次上传的快照将同时加密给该设备；历史快照不会自动重新加密。")
+		fmt.Printf("[ok] 已添加新设备接收者: %s\n", fingerprint)
+		fmt.Println("[*] 下一次上传的快照将同时加密给该设备；历史快照不会自动重新加密。")
 		return nil
 	},
 }

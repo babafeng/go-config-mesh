@@ -92,13 +92,13 @@ func (m StrategyModel) View() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(TitleStyle.Render("⚡ 请选择本地已有配置的合并/同步策略"))
+	b.WriteString(TitleStyle.Render(":: 请选择本地已有配置的合并/同步策略"))
 	b.WriteString("\n\n")
 
 	for i, opt := range m.Options {
 		cursor := "  "
 		if m.Cursor == i {
-			cursor = CursorStyle.Render("👉")
+			cursor = CursorStyle.Render("> ")
 		}
 
 		title := opt.Title

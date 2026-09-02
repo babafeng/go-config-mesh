@@ -49,7 +49,7 @@ var applyCmd = &cobra.Command{
 			targetUsername = strings.TrimSpace(args[0])
 		}
 
-		fmt.Println("🚀 正在启动 config-mesh 配置网格同步...")
+		fmt.Println(":: 启动 config-mesh 配置网格同步")
 
 		// 1. GitHub 认证检测
 		authMgr := github.NewAuthManager()
@@ -72,8 +72,8 @@ var applyCmd = &cobra.Command{
 			return fmt.Errorf("GitHub owner 或仓库名包含非法字符")
 		}
 
-		fmt.Printf("👤 当前 GitHub 用户: %s\n", tui.SelectedStyle.Render(targetUsername))
-		fmt.Printf("📦 正在检查/创建私有仓库 [%s]...\n", tui.HighlightColor)
+		fmt.Printf(":: 当前 GitHub 用户: %s\n", tui.SelectedStyle.Render(targetUsername))
+		fmt.Printf(":: 检查/创建私有仓库 [%s]...\n", tui.HighlightColor)
 
 		repo, err := ghClient.EnsurePrivateRepo(targetUsername, RepoName)
 		if err != nil {
@@ -84,7 +84,7 @@ var applyCmd = &cobra.Command{
 		if repoURL == "" {
 			repoURL = fmt.Sprintf("https://github.com/%s/%s.git", targetUsername, RepoName)
 		}
-		fmt.Printf("🔗 私有仓库地址: %s\n", repoURL)
+		fmt.Printf("-> 远程仓库地址: %s\n", repoURL)
 
 		// 3. 确定本地 Git 仓库路径
 		repoDir := CustomDir
@@ -102,7 +102,7 @@ var applyCmd = &cobra.Command{
 		}
 		gitMgr.DefaultBranch = repo.GetDefaultBranch()
 
-		fmt.Println("📥 正在同步远端仓库最新状态...")
+		fmt.Println(":: 同步远端仓库最新状态...")
 		if err := gitMgr.CloneOrPull(); err != nil {
 			return fmt.Errorf("同步远端仓库失败，已中止后续写入: %w", err)
 		}
@@ -127,7 +127,7 @@ var applyCmd = &cobra.Command{
 		mode := "upload" // upload 或 download
 		selectedSnapshot := ""
 		if len(snapshots) > 0 {
-			fmt.Printf("\n📦 检测到云端仓库已存在 %d 个主机配置快照：\n", len(snapshots))
+			fmt.Printf("\n:: 检测到云端仓库已存在 %d 个主机配置快照:\n", len(snapshots))
 			defaultDownloadIndex := -1
 			for i, s := range snapshots {
 				created := "时间未知"
@@ -209,7 +209,7 @@ var applyCmd = &cobra.Command{
 
 // handleUpload 执行本地扫描、勾选、Age 加密并推送到云端仓库
 func handleUpload(repoDir string, gitMgr *git.RepositoryManager, vaultID string) error {
-	fmt.Println("\n🔍 正在扫描本地 macOS 常用开发配置...")
+	fmt.Println("\n:: 正在扫描本地 macOS 常用开发配置...")
 	s, err := scanner.NewScanner()
 	if err != nil {
 		return err
@@ -238,7 +238,7 @@ func handleUpload(repoDir string, gitMgr *git.RepositoryManager, vaultID string)
 	var selectedItems []model.ConfigItem
 	if !yesFlag {
 		var err error
-		selectedItems, err = tui.RunCheckboxTUI("📤 选择需要加密并上传同步的本地配置项", items)
+		selectedItems, err = tui.RunCheckboxTUI(":: 选择需要加密并上传同步的本地配置项", items)
 		if err != nil {
 			return err
 		}
@@ -254,7 +254,7 @@ func handleUpload(repoDir string, gitMgr *git.RepositoryManager, vaultID string)
 	}
 
 	if len(toUpload) == 0 {
-		fmt.Println("ℹ️ 未选择任何存在的配置项，上传已取消。")
+		fmt.Println("[*] 未选择任何存在的配置项，上传已取消。")
 		return nil
 	}
 	if !yesFlag {
@@ -302,11 +302,11 @@ func autoBackupAndUploadLocal(repoDir string, gitMgr *git.RepositoryManager, vau
 	}
 
 	if len(toUpload) == 0 {
-		fmt.Println("ℹ️ 本机未发现已有推荐开发配置，跳过云端自动备份上传。")
+		fmt.Println("[*] 本机未发现已有推荐开发配置，跳过云端自动备份上传。")
 		return nil
 	}
 
-	fmt.Printf("\n📦 检测到本机已有 %d 项开发配置，正在自动备份并加密上传到 GitHub (槽位)... \n", len(toUpload))
+	fmt.Printf("\n:: 检测到本机已有 %d 项开发配置，正在自动备份并加密上传到 GitHub 槽位... \n", len(toUpload))
 	return uploadConfigItems(repoDir, gitMgr, vaultID, toUpload, items, "backup: auto-save before download", true)
 }
 
@@ -341,13 +341,13 @@ func uploadConfigItems(
 		if err != nil {
 			return fmt.Errorf("初始化 recipients.pub 失败: %w", err)
 		}
-		fmt.Printf("🔑 已建立初始接收者: %s (%s)\n", chosen.Name, fingerprint)
+		fmt.Printf("[key] 已建立初始接收者: %s (%s)\n", chosen.Name, fingerprint)
 	} else if discoverErr == nil {
 		// 如果 recipients.pub 已存在，但当前设备有可用的 SSH 公钥，且尚未加入 recipients.pub，则自动加入
 		for i := range keyPairs {
 			if keyPairs[i].PubKeyPath != "" {
 				if fingerprint, added, err := crypto.AddRecipient(recipientsPath, keyPairs[i].PubKeyPath); err == nil && added {
-					fmt.Printf("🔑 已自动将本机 SSH 接收者加入 recipients.pub: %s (%s)\n", keyPairs[i].Name, fingerprint)
+					fmt.Printf("[key] 已自动将本机 SSH 接收者加入 recipients.pub: %s (%s)\n", keyPairs[i].Name, fingerprint)
 				}
 				break
 			}
@@ -358,7 +358,7 @@ func uploadConfigItems(
 		return fmt.Errorf("加载多设备接收者失败: %w", err)
 	}
 	if !isAutoBackup {
-		fmt.Printf("🔑 将为 %d 个已授权设备接收者加密。\n", len(recipients))
+		fmt.Printf("[key] 将为 %d 个已授权设备接收者加密。\n", len(recipients))
 	}
 	recipientsHash, err := crypto.CalculateFileSHA256(recipientsPath)
 	if err != nil {
@@ -427,10 +427,10 @@ func uploadConfigItems(
 			return fmt.Errorf("配置内容未变化，但更新本地同步状态失败: %w", err)
 		}
 		if isAutoBackup {
-			fmt.Printf("✅ 本机配置已在云端备份（内容无变化，槽位: %s）。\n", snapshotName)
+			fmt.Printf("[ok] 本机配置已在云端备份 (内容无变化，槽位: %s)\n", snapshotName)
 		} else {
-			fmt.Printf("\n✅ 本机 %d 项配置与仓库一致；未创建新目录、未重复加密、未生成空提交。\n", len(toUpload))
-			fmt.Printf("📋 本机同步状态已更新: %s\n\n", stateMgr.StateFilePath)
+			fmt.Printf("\n[ok] 本机 %d 项配置与仓库一致 (未创建新目录、未重复加密、未生成空提交)\n", len(toUpload))
+			fmt.Printf("[*] 本机同步状态已更新: %s\n\n", stateMgr.StateFilePath)
 		}
 		return nil
 	}
@@ -447,7 +447,7 @@ func uploadConfigItems(
 		return fmt.Errorf("创建快照存储目录失败: %w", err)
 	}
 
-	fmt.Printf("📦 正在更新本机稳定配置目录: %s\n", snapshotName)
+	fmt.Printf(":: 正在更新本机稳定配置目录: %s\n", snapshotName)
 
 	var uploadedManifestItems []model.ConfigItem
 	var uploadedStateItems []model.ConfigItem
@@ -574,7 +574,7 @@ func uploadConfigItems(
 	}
 
 	// 提交并推送到 GitHub 私有仓库
-	fmt.Println("🚀 正在提交并推送到 GitHub 私有仓库...")
+	fmt.Println(":: 正在提交并推送到 GitHub 私有仓库...")
 	commitMsg := fmt.Sprintf("%s %s (%d encrypted, %d reused)", commitPrefix, snapshotName, encryptedCount, reusedCount)
 	if err := gitMgr.CommitAndPush(commitMsg, "recipients.pub", filepath.ToSlash(filepath.Join("hosts", snapshotName))); err != nil {
 		return fmt.Errorf("推送至 GitHub 失败: %w", err)
@@ -591,13 +591,13 @@ func uploadConfigItems(
 	}
 
 	if isAutoBackup {
-		fmt.Printf("✅ 本机现有配置已自动备份并上传至云端槽位 [%s]（%d 项加密，%d 项复用，总计 %s）。\n",
+		fmt.Printf("[ok] 本机现有配置已自动备份并上传至云端槽位 [%s] (%d 项加密，%d 项复用，总计 %s)\n",
 			snapshotName, encryptedCount, reusedCount, scanner.FormatSize(totalUploadedSize))
 	} else {
-		fmt.Printf("\n✨ 同步成功！稳定目录 [%s] 已更新：%d 项重新加密，%d 项复用，总计 %s。\n",
+		fmt.Printf("\n[ok] 同步成功！稳定目录 [%s] 已更新: %d 项重新加密, %d 项复用, 总计 %s\n",
 			snapshotName, encryptedCount, reusedCount, scanner.FormatSize(totalUploadedSize))
-		fmt.Printf("📋 本机同步状态: %s\n", stateMgr.StateFilePath)
-		fmt.Println("💡 在另一台 Mac 设备上执行相同命令即可解密同步：")
+		fmt.Printf("[*] 本机同步状态: %s\n", stateMgr.StateFilePath)
+		fmt.Println("[*] 在另一台 Mac 设备上执行相同命令即可解密同步:")
 		fmt.Printf("   config-mesh apply %s\n\n", gitMgr.AuthUser)
 	}
 
@@ -695,7 +695,7 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 	var strategy model.Strategy
 	if !yesFlag {
 		// 1. TUI 让用户勾选挑选想要同步的配置项
-		selectedItems, err := tui.RunCheckboxTUI("📥 请勾选想要从云端同步到本机的配置项", remoteManifest.Items)
+		selectedItems, err := tui.RunCheckboxTUI(":: 请勾选想要从云端同步到本机的配置项", remoteManifest.Items)
 		if err != nil {
 			return err
 		}
@@ -707,7 +707,7 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 		}
 
 		if len(toApply) == 0 {
-			fmt.Println("ℹ️ 未选择任何配置项，同步已取消。")
+			fmt.Println("[*] 未选择任何配置项，同步已取消。")
 			return nil
 		}
 		if err := confirmSensitiveItems(toApply, "下载并覆盖本机"); err != nil {
@@ -720,7 +720,7 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 			return err
 		}
 		if strategy == model.StrategySkip {
-			fmt.Println("ℹ️ 已选择跳过，本地配置和同步状态均未修改。")
+			fmt.Println("[*] 已选择跳过，本地配置和同步状态均未修改。")
 			return nil
 		}
 	} else {
@@ -730,18 +730,18 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 			}
 		}
 		if len(toApply) == 0 {
-			fmt.Println("ℹ️ 未选择任何配置项，同步已取消。")
+			fmt.Println("[*] 未选择任何配置项，同步已取消。")
 			return nil
 		}
 		strategy = model.StrategyOverwrite
-		fmt.Printf("⚙️ 应用策略 (非交互默认): %s\n", strategy)
+		fmt.Printf(":: 应用策略 (非交互默认): %s\n", strategy)
 	}
 	for _, item := range toApply {
 		if err := sync.ValidateApplyStrategy(item, strategy); err != nil {
 			return err
 		}
 	}
-	fmt.Printf("⚙️ 应用策略: %s\n", strategy)
+	fmt.Printf(":: 应用策略: %s\n", strategy)
 
 	// 3. 在任何本地写入前，先完整解密并验证所有勾选项。
 	vaultDir := filepath.Join(snapshotDir, "vault")
@@ -792,7 +792,7 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 			existingCount++
 		}
 	}
-	fmt.Printf("🛡️ 已建立本地可完整回滚快照 (%d 项已有，%d 项原本不存在): %s\n",
+	fmt.Printf("[ok] 已建立本地前置回滚快照 (%d 项已有，%d 项原本不存在): %s\n",
 		existingCount, len(backupManifest.Items)-existingCount, backupManifest.BackupDir)
 
 	// 5. 自动将当前设备本地现有配置加密备份并上传至 GitHub 私有仓库
@@ -815,7 +815,7 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 		item.Strategy = strategy
 		item.Selected = true
 		appliedItems = append(appliedItems, item)
-		fmt.Printf("  ✅ 已成功同步: %s\n", item.Name)
+		fmt.Printf("  [ok] 已同步: %s\n", item.Name)
 	}
 
 	if err := stateMgr.RecordDownloadSuccess(appliedItems, snapshotName); err != nil {
@@ -831,8 +831,8 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 		totalAppliedSize += item.Size
 	}
 
-	fmt.Printf("\n🎉 同步应用完成！共更新 %d 项配置 (总计大小: %s)。\n", len(appliedItems), scanner.FormatSize(totalAppliedSize))
-	fmt.Println("💡 若需要撤销本次同步，可随时执行一键回滚：")
+	fmt.Printf("\n[ok] 同步应用完成！共更新 %d 项配置 (总计大小: %s)\n", len(appliedItems), scanner.FormatSize(totalAppliedSize))
+	fmt.Println("[*] 若需要撤销本次同步，可随时执行一键回滚:")
 	fmt.Printf("   config-mesh rollback %s\n\n", backupManifest.BackupID)
 
 	return nil
@@ -857,7 +857,7 @@ func confirmSensitiveItemsFrom(items []model.ConfigItem, action string, reader i
 	if len(sensitive) == 0 {
 		return nil
 	}
-	fmt.Fprintf(writer, "\n🔐 本次将%s %d 个凭据文件：\n", action, len(sensitive))
+	fmt.Fprintf(writer, "\n[!] 本次将%s %d 个凭据文件:\n", action, len(sensitive))
 	for _, item := range sensitive {
 		fmt.Fprintf(writer, "  - %s [%s]\n", item.Name, item.SecretKind)
 	}
@@ -921,7 +921,7 @@ func decryptManifestWithLocalKeys(cipherManifest []byte) ([]age.Identity, []byte
 
 	if len(identities) > 0 {
 		if plain, decryptErr := crypto.Decrypt(cipherManifest, identities...); decryptErr == nil {
-			fmt.Printf("🔑 已从 %d 个本地 SSH 身份中找到匹配密钥。\n", len(identities))
+			fmt.Printf("[key] 已从 %d 个本地 SSH 身份中找到匹配密钥\n", len(identities))
 			return identities, plain, nil
 		}
 	}
@@ -930,7 +930,7 @@ func decryptManifestWithLocalKeys(cipherManifest []byte) ([]age.Identity, []byte
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
 			return nil, nil, fmt.Errorf("SSH 私钥 %s 已加密，非交互终端无法安全读取密码", kp.Name)
 		}
-		fmt.Printf("🔐 请输入 SSH 私钥 %s 的密码: ", kp.Name)
+		fmt.Printf("[key] 请输入 SSH 私钥 %s 的密码: ", kp.Name)
 		secret, readErr := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Println()
 		if readErr != nil {
@@ -941,7 +941,7 @@ func decryptManifestWithLocalKeys(cipherManifest []byte) ([]age.Identity, []byte
 			secret[i] = 0
 		}
 		if parseErr != nil {
-			fmt.Printf("⚠️ 无法解锁 %s，继续尝试其他密钥。\n", kp.Name)
+			fmt.Printf("[!] 无法解锁 %s，继续尝试其他密钥\n", kp.Name)
 			continue
 		}
 		identities = append(identities, identity)

@@ -37,8 +37,8 @@ var scanCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Println("🔍 正在扫描 macOS 预设配置项...")
-		selected, err := tui.RunCheckboxTUI("🔍 本地配置项扫描结果 (可预览勾选)", items)
+		fmt.Println(":: 正在扫描 macOS 预设配置项...")
+		selected, err := tui.RunCheckboxTUI(":: 本地配置项扫描结果 (可预览勾选)", items)
 		if err != nil {
 			return err
 		}
@@ -54,7 +54,7 @@ var scanCmd = &cobra.Command{
 			}
 		}
 
-		fmt.Printf("\n✅ 预览完成，当前共勾选 %d 项配置 (总计大小: %s)。\n", selectedCount, scanner.FormatSize(totalSize))
+		fmt.Printf("\n[ok] 预览完成，当前共勾选 %d 项配置 (总计大小: %s)。\n", selectedCount, scanner.FormatSize(totalSize))
 		return nil
 	},
 }

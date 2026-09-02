@@ -42,7 +42,7 @@ func TestCheckboxViewKeepsCursorInsideSmallViewport(t *testing.T) {
 
 	view := m.View()
 	plain := ansi.Strip(view)
-	if !strings.Contains(plain, "👉 [ ]   配置条目-20") {
+	if !strings.Contains(plain, ">  [ ]   配置条目-20") {
 		t.Fatalf("当前光标条目未显示:\n%s", plain)
 	}
 	if got := len(strings.Split(view, "\n")); got > 10 {
@@ -79,7 +79,7 @@ func TestCheckboxTinyTerminalStillShowsCursor(t *testing.T) {
 	m = updateCheckbox(t, m, tea.WindowSizeMsg{Width: 24, Height: 1})
 
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "👉 [ ]   配置条目-03") {
+	if !strings.Contains(view, ">  [ ]   配置条目-03") {
 		t.Fatalf("极小终端未显示当前光标条目: %q", view)
 	}
 	if got := len(strings.Split(view, "\n")); got != 1 {

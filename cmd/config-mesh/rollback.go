@@ -29,7 +29,7 @@ var rollbackCmd = &cobra.Command{
 		}
 
 		if len(backups) == 0 {
-			fmt.Println("ℹ️ 未检测到任何本地历史备份快照。")
+			fmt.Println("[*] 未检测到任何本地历史备份快照。")
 			return nil
 		}
 
@@ -38,12 +38,12 @@ var rollbackCmd = &cobra.Command{
 			backupID = args[0]
 		}
 
-		fmt.Printf("🔄 正在从快照 [%s] 执行回滚还原...\n", backupID)
+		fmt.Printf(":: 正在从快照 [%s] 执行回滚还原...\n", backupID)
 		if err := bm.Rollback(backupID); err != nil {
 			return fmt.Errorf("回滚失败: %w", err)
 		}
 
-		fmt.Println("🎉 配置已成功回滚还原至备份状态！")
+		fmt.Println("[ok] 配置已成功回滚还原至备份状态。")
 		return nil
 	},
 }

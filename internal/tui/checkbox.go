@@ -225,7 +225,7 @@ func (m CheckboxModel) itemRows() []checkboxRow {
 	for entryIndex, entry := range entries {
 		cursor := "  "
 		if m.Cursor == entryIndex {
-			cursor = CursorStyle.Render("👉")
+			cursor = CursorStyle.Render("> ")
 		}
 
 		if entry.itemIndex < 0 {
@@ -266,13 +266,13 @@ func (m CheckboxModel) itemRows() []checkboxRow {
 
 		recBadge := ""
 		if item.Recommended {
-			recBadge = " " + RecommendedBadgeStyle.Render("★推荐")
+			recBadge = " " + RecommendedBadgeStyle.Render("*推荐")
 		}
 		secretBadge := ""
 		if item.SecretKind != "" {
-			label := "[🔐凭据·默认不选]"
+			label := "[!凭据·默认不选]"
 			if item.SecretKind == model.SecretKindDetectedConfig {
-				label = "[🔐检测到凭据]"
+				label = "[!检测到凭据]"
 			}
 			secretBadge = " " + StatusConflictStyle.Render(label)
 		}

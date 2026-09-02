@@ -40,27 +40,27 @@ var statusCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Println("📊 本地配置相对于上次同步基线的差异概览：")
+		fmt.Println(":: 本地配置与同步基线差异概览:")
 		if localState.VaultID != "" {
-			fmt.Printf("🗄️ 当前基线 vault: %s\n", localState.VaultID)
+			fmt.Printf("   [vault] 当前基线: %s\n", localState.VaultID)
 		}
-		fmt.Printf("📋 状态文件: %s\n", stateMgr.StateFilePath)
+		fmt.Printf("   [state] 状态文件: %s\n", stateMgr.StateFilePath)
 		if localState.UploadSnapshotID != "" {
-			fmt.Printf("💻 本机稳定上传目录: hosts/%s\n", localState.UploadSnapshotID)
+			fmt.Printf("   [host]  本机槽位: hosts/%s\n", localState.UploadSnapshotID)
 		}
 		if !localState.LastUploadedAt.IsZero() {
-			fmt.Printf("📤 上次上传确认: %s\n", localState.LastUploadedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("   [push]  上次上传: %s\n", localState.LastUploadedAt.Format("2006-01-02 15:04:05"))
 		}
 		if !localState.LastDownloadedAt.IsZero() {
-			fmt.Printf("📥 上次下载应用: %s\n", localState.LastDownloadedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("   [pull]  上次下载: %s\n", localState.LastDownloadedAt.Format("2006-01-02 15:04:05"))
 		}
 		if !localState.LastSyncedAt.IsZero() {
-			fmt.Printf("⏱️ 上次同步时间: %s (快照: %s)\n\n",
+			fmt.Printf("   [time]  上次同步: %s (快照: %s)\n\n",
 				localState.LastSyncedAt.Format("2006-01-02 15:04:05"),
 				localState.RemoteSnapshotID,
 			)
 		} else {
-			fmt.Printf("⏱️ 上次同步时间: %s\n\n", tui.DimStyle.Render("尚未进行过全量同步"))
+			fmt.Printf("   [time]  上次同步: %s\n\n", tui.DimStyle.Render("尚未进行过全量同步"))
 		}
 
 		var currentCategory model.ConfigCategory = ""
@@ -95,7 +95,7 @@ var statusCmd = &cobra.Command{
 			fmt.Printf("  %s %-50s %-12s %s\n", statusStr, item.Name, sizeStr, hashSnippet)
 		}
 
-		fmt.Println("\n💡 此命令不访问网络；云端更新会在 `config-mesh apply` 成功拉取 Manifest 后计算。")
+		fmt.Println("\n[*] 提示: 此命令不访问网络；云端更新会在 `config-mesh apply` 成功拉取 Manifest 后计算。")
 		return nil
 	},
 }
