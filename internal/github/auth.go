@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/zalando/go-keyring"
@@ -24,7 +25,7 @@ func NewAuthManager() *AuthManager {
 	return &AuthManager{}
 }
 
-// GetToken 尝试从环境/gh cli/Keychain 获取 Token，若均无则引导用户输入并存入 Keychain
+// GetToken 尝试从环境/gh cli/hosts.yml/Keychain 获取 Token，若均无则引导用户输入并存入 Keychain
 func (am *AuthManager) GetToken(username string) (string, error) {
 	// 1. 优先检查环境变量
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
@@ -34,8 +35,11 @@ func (am *AuthManager) GetToken(username string) (string, error) {
 		return strings.TrimSpace(token), nil
 	}
 
-	// 2. 尝试复用 GitHub CLI (gh)
+	// 2. 尝试复用 GitHub CLI (gh) 或直接读取 ~/.config/gh/hosts.yml
 	if token, err := am.getTokenFromGHCLI(); err == nil && token != "" {
+		return token, nil
+	}
+	if token, err := am.getTokenFromGHHostsFile(); err == nil && token != "" {
 		return token, nil
 	}
 
@@ -85,6 +89,30 @@ func (am *AuthManager) getTokenFromGHCLI() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// getTokenFromGHHostsFile 尝试直接从 ~/.config/gh/hosts.yml 中解析 oauth_token
+func (am *AuthManager) getTokenFromGHHostsFile() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	hostsPath := filepath.Join(home, ".config", "gh", "hosts.yml")
+	data, err := os.ReadFile(hostsPath)
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "oauth_token:") {
+			token := strings.TrimSpace(strings.TrimPrefix(trimmed, "oauth_token:"))
+			if token != "" {
+				return token, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("未在 hosts.yml 中找到 oauth_token")
 }
 
 // ClearSavedToken 清除 Keychain 中保存的 Token
