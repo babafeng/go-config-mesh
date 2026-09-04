@@ -78,11 +78,14 @@ type Manifest struct {
 
 // BackupManifest 本地前置快照备份元数据清单
 type BackupManifest struct {
-	BackupID  string       `json:"backup_id"`  // 备份标识 (如 backup-20260901-150405)
-	CreatedAt time.Time    `json:"created_at"` // 备份时间
-	Hostname  string       `json:"hostname"`   // 本机主机名
-	BackupDir string       `json:"backup_dir"` // 本地备份存储目录
-	Items     []ConfigItem `json:"items"`      // 备份的配置项清单
+	BackupID      string       `json:"backup_id"`                // 备份标识 (如 backup-20260901-150405)
+	CreatedAt     time.Time    `json:"created_at"`               // 备份时间
+	Hostname      string       `json:"hostname"`                 // 本机主机名
+	BackupDir     string       `json:"backup_dir"`               // 本地备份存储目录
+	VaultID       string       `json:"vault_id,omitempty"`       // 关联的 vault ID
+	StateFile     string       `json:"state_file,omitempty"`     // 状态文件绝对路径
+	StateSnapshot string       `json:"state_snapshot,omitempty"` // 备份目录中的状态文件快照名称
+	Items         []ConfigItem `json:"items"`                    // 备份的配置项清单
 }
 
 // DiffStatus 配置项差异对比状态

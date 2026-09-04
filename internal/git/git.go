@@ -71,10 +71,27 @@ func (rm *RepositoryManager) CloneOrPull() error {
 		return fmt.Errorf("更新 Git 远端地址失败: %s (%w)", string(out), err)
 	}
 
+	// 1. 检查并清理可能遗留的未决 rebase 状态
+	rebaseMerge := filepath.Join(rm.RepoDir, ".git", "rebase-merge")
+	rebaseApply := filepath.Join(rm.RepoDir, ".git", "rebase-apply")
+	if _, err := os.Stat(rebaseMerge); err == nil {
+		abortCmd := exec.Command("git", "-C", rm.RepoDir, "rebase", "--abort")
+		abortCmd.Env = rm.gitEnv()
+		_ = abortCmd.Run()
+	} else if _, err := os.Stat(rebaseApply); err == nil {
+		abortCmd := exec.Command("git", "-C", rm.RepoDir, "rebase", "--abort")
+		abortCmd.Env = rm.gitEnv()
+		_ = abortCmd.Run()
+	}
+
 	branch := rm.branch()
 	pullCmd := exec.Command("git", "-C", rm.RepoDir, "pull", "--rebase", "origin", branch)
 	pullCmd.Env = rm.gitEnv()
 	if out, err := pullCmd.CombinedOutput(); err != nil {
+		// pull --rebase 失败（如遇到代码/密钥冲突）时立即执行 rebase --abort 清理现场，防止工作区卡死
+		abortCmd := exec.Command("git", "-C", rm.RepoDir, "rebase", "--abort")
+		abortCmd.Env = rm.gitEnv()
+		_ = abortCmd.Run()
 		return fmt.Errorf("git pull --rebase 失败: %s (%w)", redactAuth(string(out), rm.Token), err)
 	}
 	return nil

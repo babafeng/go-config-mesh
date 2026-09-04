@@ -167,6 +167,11 @@ func ListHostSnapshots(repoRoot string) ([]HostSnapshotInfo, error) {
 		}
 
 		name := entry.Name()
+		// 忽略隐藏目录及内部暂存/备份目录 (如 .staging-, .previous-)
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+
 		fullPath := filepath.Join(hostsDir, name)
 
 		// 只接受普通的加密 Manifest；明文或软链接清单不属于有效快照。

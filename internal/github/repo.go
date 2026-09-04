@@ -54,8 +54,9 @@ func (rc *RepoClient) EnsurePrivateRepo(owner, repoName string) (*github.Reposit
 		return repo, nil
 	}
 
-	// 若非 404 错误（如权限或网络错误），直接返回
-	if resp != nil && resp.StatusCode != http.StatusNotFound {
+	// 仅当明确返回 404 Not Found 时才视作仓库不存在并执行自动创建；
+	// 若网络异常 (resp == nil) 或返回其他 HTTP 错误状态码，必须直接返回错误。
+	if resp == nil || resp.StatusCode != http.StatusNotFound {
 		return nil, fmt.Errorf("查询 GitHub 仓库失败: %w", err)
 	}
 

@@ -43,6 +43,8 @@ func init() {
 
 	// 注册子命令
 	rootCmd.AddCommand(applyCmd)
+	rootCmd.AddCommand(pushCmd)
+	rootCmd.AddCommand(scheduleCmd)
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(rollbackCmd)

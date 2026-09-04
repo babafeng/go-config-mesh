@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"config-mesh/internal/model"
@@ -79,7 +80,31 @@ func DiscoverLocalSSHKeys() ([]model.KeyPairInfo, error) {
 		keyPairs = append(keyPairs, kp)
 	}
 
+	// 严格按照 OpenSSH 默认密钥规范排序：优先 id_ed25519，其次 id_rsa，其余按字母序排列
+	sort.SliceStable(keyPairs, func(i, j int) bool {
+		pI := sshDefaultKeyPriority(keyPairs[i].Name)
+		pJ := sshDefaultKeyPriority(keyPairs[j].Name)
+		if pI != pJ {
+			return pI < pJ
+		}
+		return keyPairs[i].Name < keyPairs[j].Name
+	})
+
 	return keyPairs, nil
+}
+
+func sshDefaultKeyPriority(filename string) int {
+	base := strings.TrimSuffix(filename, ".pub")
+	switch base {
+	case "id_ed25519":
+		return 0
+	case "id_rsa":
+		return 1
+	case "id_ecdsa":
+		return 2
+	default:
+		return 100
+	}
 }
 
 // CalculateSHA256 计算数据的 SHA256 哈希值

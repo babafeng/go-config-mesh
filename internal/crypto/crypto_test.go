@@ -144,3 +144,15 @@ func TestRecipientsRegistryRejectsSymlink(t *testing.T) {
 		t.Fatal("接收者注册表不得是软链接")
 	}
 }
+
+func TestSSHDefaultKeyPriority(t *testing.T) {
+	if p := sshDefaultKeyPriority("id_ed25519.pub"); p != 0 {
+		t.Fatalf("id_ed25519 优先级必须为最高 0，实际: %d", p)
+	}
+	if p := sshDefaultKeyPriority("id_rsa.pub"); p != 1 {
+		t.Fatalf("id_rsa 优先级必须为 1，实际: %d", p)
+	}
+	if p := sshDefaultKeyPriority("aws_key.pub"); p <= 1 {
+		t.Fatalf("自定义 key 优先级必须靠后，实际: %d", p)
+	}
+}

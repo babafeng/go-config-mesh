@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/pem"
 	"net"
 	"os"
@@ -65,6 +66,88 @@ func TestDeepMergeJSON(t *testing.T) {
 	}
 }
 
+func TestDeepMergeJSONArray(t *testing.T) {
+	local := []byte(`[
+		{"key": "ctrl+c", "command": "copy"},
+		{"key": "ctrl+v", "command": "paste"}
+	]`)
+	remote := []byte(`[
+		{"key": "ctrl+v", "command": "paste"},
+		{"key": "ctrl+x", "command": "cut"}
+	]`)
+
+	merged, err := deepMergeJSON(local, remote)
+	if err != nil {
+		t.Fatalf("合并 JSON Array 失败: %v", err)
+	}
+
+	mergedStr := string(merged)
+	if !strings.Contains(mergedStr, "ctrl+c") || !strings.Contains(mergedStr, "ctrl+x") {
+		t.Fatalf("合并后的 Array 缺少预期项: %s", mergedStr)
+	}
+	if strings.Count(mergedStr, "ctrl+v") != 1 {
+		t.Fatalf("重复项未被去重: %s", mergedStr)
+	}
+}
+
+func TestDeepMergeJSONC(t *testing.T) {
+	local := []byte(`{
+		// 基础配置
+		"fontSize": 14, /* 行内注释 */
+		"theme": "dark",
+	}`)
+	remote := []byte(`[
+		// 注释
+		1, 2, 3,
+	]`)
+
+	// 1. 测试带注释与逗号的对象合并
+	remoteObj := []byte(`{
+		/* 远端设置 */
+		"tabSize": 4,
+	}`)
+	merged, err := deepMergeJSON(local, remoteObj)
+	if err != nil {
+		t.Fatalf("合并带注释的 JSONC 失败: %v", err)
+	}
+	if !strings.Contains(string(merged), `"fontSize": 14`) || !strings.Contains(string(merged), `"tabSize": 4`) {
+		t.Fatalf("JSONC 合并结果异常: %s", string(merged))
+	}
+
+	// 2. 类型冲突测试
+	if _, err := deepMergeJSON(local, remote); err == nil {
+		t.Fatalf("Map 与 Array 类型冲突时必须报错")
+	}
+}
+
+func TestApplyConfigItemSSHParentPerm(t *testing.T) {
+	tmpDir := t.TempDir()
+	sshDir := filepath.Join(tmpDir, ".ssh")
+	keyPath := filepath.Join(sshDir, "id_ed25519")
+
+	item := model.ConfigItem{
+		ID:          "ssh_key",
+		LocalPath:   keyPath,
+		RelHomePath: ".ssh/id_ed25519",
+		Category:    model.CategorySSH,
+		SecretKind:  model.SecretKindSSHPrivateKey,
+		FileMode:    0600,
+	}
+
+	err := ApplyConfigItem(item, []byte("fake-private-key"), model.StrategyOverwrite)
+	if err != nil {
+		t.Fatalf("应用 SSH 配置失败: %v", err)
+	}
+
+	info, err := os.Stat(sshDir)
+	if err != nil {
+		t.Fatalf("获取 .ssh 目录状态失败: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0700 {
+		t.Fatalf("SSH 父目录权限必须为 0700，实际: %o", perm)
+	}
+}
+
 func TestBackupAndRollback(t *testing.T) {
 	tmpDir := t.TempDir()
 	baseBackupDir := filepath.Join(tmpDir, "backups")
@@ -112,6 +195,91 @@ func TestBackupAndRollback(t *testing.T) {
 
 	if string(restoredContent) != originalContent {
 		t.Fatalf("还原内容不匹配: 期望 %s, 实际 %s", originalContent, string(restoredContent))
+	}
+}
+
+func TestBackupAndRollbackRestoresLocalState(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseBackupDir := filepath.Join(tmpDir, "backups")
+	stateFile := filepath.Join(tmpDir, "test-state.json")
+
+	initialState := model.LocalState{
+		Version:          "1.0.0",
+		VaultID:          "test/vault",
+		RemoteSnapshotID: "snap-original",
+		TrackedItems: map[string]model.TrackedItemState{
+			"item1": {ID: "item1", LastLocalHash: "hash-initial"},
+		},
+	}
+	initialBytes, _ := json.MarshalIndent(initialState, "", "  ")
+	if err := os.WriteFile(stateFile, initialBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	testFilePath := filepath.Join(tmpDir, "file.txt")
+	if err := os.WriteFile(testFilePath, []byte("initial-content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	item := model.ConfigItem{
+		ID:          "item1",
+		LocalPath:   testFilePath,
+		RelHomePath: "file.txt",
+		Exists:      true,
+		ContentHash: "hash-initial",
+	}
+
+	bm := &BackupManager{
+		BackupBaseDir: baseBackupDir,
+		RestoreRoot:   tmpDir,
+		StateFilePath: stateFile,
+		VaultID:       "test/vault",
+	}
+
+	manifest, err := bm.BackupSelectedFiles([]model.ConfigItem{item})
+	if err != nil {
+		t.Fatalf("备份失败: %v", err)
+	}
+
+	// 模拟同步覆盖：文件被篡改，状态库被写入新的远端快照和新哈希
+	if err := os.WriteFile(testFilePath, []byte("new-corrupted-content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	corruptedState := model.LocalState{
+		Version:          "1.0.0",
+		VaultID:          "test/vault",
+		RemoteSnapshotID: "snap-corrupted",
+		TrackedItems: map[string]model.TrackedItemState{
+			"item1": {ID: "item1", LastLocalHash: "hash-corrupted"},
+		},
+	}
+	corruptedBytes, _ := json.MarshalIndent(corruptedState, "", "  ")
+	if err := os.WriteFile(stateFile, corruptedBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 执行回滚
+	if err := bm.Rollback(manifest.BackupID); err != nil {
+		t.Fatalf("回滚失败: %v", err)
+	}
+
+	// 验证文件内容已恢复
+	fileContent, _ := os.ReadFile(testFilePath)
+	if string(fileContent) != "initial-content" {
+		t.Fatalf("文件未恢复: %s", string(fileContent))
+	}
+
+	// 验证状态库已同步还原为 initialState
+	restoredStateBytes, _ := os.ReadFile(stateFile)
+	var restoredState model.LocalState
+	if err := json.Unmarshal(restoredStateBytes, &restoredState); err != nil {
+		t.Fatal(err)
+	}
+	if restoredState.RemoteSnapshotID != "snap-original" {
+		t.Fatalf("状态库 RemoteSnapshotID 未恢复: %s", restoredState.RemoteSnapshotID)
+	}
+	if restoredState.TrackedItems["item1"].LastLocalHash != "hash-initial" {
+		t.Fatalf("状态库 LastLocalHash 未恢复: %s", restoredState.TrackedItems["item1"].LastLocalHash)
 	}
 }
 

@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,12 +13,29 @@ import (
 	gh "github.com/google/go-github/v60/github"
 )
 
+type mockTransport struct {
+	handler http.Handler
+}
+
+func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	m.handler.ServeHTTP(rec, req)
+	resp := rec.Result()
+	resp.Request = req
+	return resp, nil
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func testRepoClient(t *testing.T, handler http.HandlerFunc) *RepoClient {
 	t.Helper()
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-	client := gh.NewClient(server.Client())
-	baseURL, err := url.Parse(server.URL + "/")
+	transport := &mockTransport{handler: handler}
+	client := gh.NewClient(&http.Client{Transport: transport})
+	baseURL, err := url.Parse("https://api.github.local/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,3 +105,19 @@ func TestGetTokenPrefersEnvironment(t *testing.T) {
 		t.Fatalf("环境 Token 优先级或清理错误: %q", token)
 	}
 }
+
+func TestEnsurePrivateRepoNetworkError(t *testing.T) {
+	transport := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("dial tcp: connection refused (network down)")
+	})
+	client := gh.NewClient(&http.Client{Transport: transport})
+	baseURL, _ := url.Parse("https://api.github.local/")
+	client.BaseURL = baseURL
+	repoClient := &RepoClient{client: client, ctx: context.Background()}
+
+	_, err := repoClient.EnsurePrivateRepo("alice", "vault")
+	if err == nil || !strings.Contains(err.Error(), "查询 GitHub 仓库失败") {
+		t.Fatalf("网络异常时必须直接报错，实际: %v", err)
+	}
+}
+

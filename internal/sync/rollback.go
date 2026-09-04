@@ -1,11 +1,13 @@
 package sync
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"config-mesh/internal/model"
 )
@@ -93,8 +95,11 @@ func (bm *BackupManager) Rollback(backupID string) error {
 	// 先验证全部路径和备份内容，再开始任何破坏性还原，避免因坏清单造成半回滚。
 	for _, item := range target.Items {
 		targetPath, pathErr := safeJoin(restoreRoot, item.RelHomePath)
-		if pathErr != nil || filepath.Clean(targetPath) != filepath.Clean(item.LocalPath) {
-			return fmt.Errorf("回滚目标越界或与备份记录不一致: %s", item.RelHomePath)
+		if pathErr != nil {
+			return fmt.Errorf("回滚目标越界: %s", item.RelHomePath)
+		}
+		if bm.RestoreRoot == "" && filepath.Clean(targetPath) != filepath.Clean(item.LocalPath) {
+			return fmt.Errorf("回滚目标与备份记录不一致: %s", item.RelHomePath)
 		}
 		if err := ensureNoSymlinkParents(restoreRoot, targetPath); err != nil {
 			return fmt.Errorf("回滚目标父路径不安全: %w", err)
@@ -115,8 +120,11 @@ func (bm *BackupManager) Rollback(backupID string) error {
 	}
 	for _, item := range target.Items {
 		targetPath, err := safeJoin(restoreRoot, item.RelHomePath)
-		if err != nil || filepath.Clean(targetPath) != filepath.Clean(item.LocalPath) {
-			return fmt.Errorf("回滚目标越界或与备份记录不一致: %s", item.RelHomePath)
+		if err != nil {
+			return fmt.Errorf("回滚目标越界: %s", item.RelHomePath)
+		}
+		if bm.RestoreRoot == "" && filepath.Clean(targetPath) != filepath.Clean(item.LocalPath) {
+			return fmt.Errorf("回滚目标与备份记录不一致: %s", item.RelHomePath)
 		}
 		if !item.Exists {
 			if err := os.RemoveAll(targetPath); err != nil {
@@ -141,5 +149,73 @@ func (bm *BackupManager) Rollback(backupID string) error {
 		}
 	}
 
+	// 同步还原本地状态基线 (LocalState)，确保 rollback 后基线与实际文件一致
+	bm.restoreLocalState(target)
+
 	return nil
+}
+
+// restoreLocalState 还原本地状态库，使文件回滚后 LocalState 与本地实际文件保持一致，消除虚假修改
+func (bm *BackupManager) restoreLocalState(target *model.BackupManifest) {
+	// 1. 若备份清单中包含状态快照文件 (state-snapshot.json)，直接覆盖还原状态文件
+	if target.StateSnapshot != "" {
+		snapshotPath := filepath.Join(target.BackupDir, target.StateSnapshot)
+		if data, err := os.ReadFile(snapshotPath); err == nil {
+			destFile := target.StateFile
+			if destFile == "" && bm.StateFilePath != "" {
+				destFile = bm.StateFilePath
+			}
+			if destFile != "" {
+				_ = os.MkdirAll(filepath.Dir(destFile), 0700)
+				_ = atomicWriteFile(destFile, data, 0600)
+				return
+			}
+		}
+	}
+
+	// 2. 向后兼容：若备份中未打包状态快照文件，则定位本地状态库，
+	// 根据 target.Items 记录的原始 ContentHash 刷新本地 TrackedItems 基线哈希
+	homeDir, _ := os.UserHomeDir()
+	if homeDir == "" {
+		return
+	}
+	stateFile := bm.StateFilePath
+	if stateFile == "" {
+		if target.StateFile != "" {
+			stateFile = target.StateFile
+		} else {
+			activeVaultFile := filepath.Join(homeDir, ".config-mesh", "active-vault")
+			if vBytes, err := os.ReadFile(activeVaultFile); err == nil {
+				vID := strings.TrimSpace(string(vBytes))
+				if vID != "" {
+					stateFile = filepath.Join(homeDir, ".config-mesh", "states", fmt.Sprintf("%x.json", sha256.Sum256([]byte(vID))))
+				}
+			}
+		}
+	}
+	if stateFile == "" {
+		return
+	}
+
+	stateBytes, err := os.ReadFile(stateFile)
+	if err != nil {
+		return
+	}
+	var localState model.LocalState
+	if err := json.Unmarshal(stateBytes, &localState); err != nil {
+		return
+	}
+
+	for _, item := range target.Items {
+		if tracked, ok := localState.TrackedItems[item.ID]; ok {
+			if item.ContentHash != "" {
+				tracked.LastLocalHash = item.ContentHash
+				localState.TrackedItems[item.ID] = tracked
+			}
+		}
+	}
+
+	if updatedBytes, err := json.MarshalIndent(localState, "", "  "); err == nil {
+		_ = atomicWriteFile(stateFile, updatedBytes, 0600)
+	}
 }

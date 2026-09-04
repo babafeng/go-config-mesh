@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,7 +18,9 @@ import (
 type BackupManager struct {
 	BackupBaseDir string
 	// RestoreRoot 限制 rollback 只能写入该目录。空值时使用当前用户家目录。
-	RestoreRoot string
+	RestoreRoot   string
+	StateFilePath string
+	VaultID       string
 }
 
 // NewBackupManager 创建备份管理器实例
@@ -104,7 +107,36 @@ func (bm *BackupManager) BackupSelectedFiles(items []model.ConfigItem) (*model.B
 		CreatedAt: now,
 		Hostname:  hostname,
 		BackupDir: backupDir,
+		VaultID:   bm.VaultID,
 		Items:     backedUpItems,
+	}
+
+	// 如果指定了当前状态文件（或者默认发现状态文件），一并为 LocalState 生成安全快照
+	stateFile := bm.StateFilePath
+	if stateFile == "" {
+		homeDir, _ := os.UserHomeDir()
+		if homeDir != "" {
+			activeVaultPath := filepath.Join(homeDir, ".config-mesh", "active-vault")
+			if activeVaultBytes, err := os.ReadFile(activeVaultPath); err == nil {
+				vID := strings.TrimSpace(string(activeVaultBytes))
+				if vID != "" {
+					if manifest.VaultID == "" {
+						manifest.VaultID = vID
+					}
+					stateFile = filepath.Join(homeDir, ".config-mesh", "states", fmt.Sprintf("%x.json", sha256.Sum256([]byte(vID))))
+				}
+			}
+		}
+	}
+	if stateFile != "" {
+		if stateData, err := os.ReadFile(stateFile); err == nil {
+			stateSnapshotName := "state-snapshot.json"
+			stateSnapshotPath := filepath.Join(backupDir, stateSnapshotName)
+			if err := os.WriteFile(stateSnapshotPath, stateData, 0600); err == nil {
+				manifest.StateFile = stateFile
+				manifest.StateSnapshot = stateSnapshotName
+			}
+		}
 	}
 
 	// 写入 backup-manifest.json

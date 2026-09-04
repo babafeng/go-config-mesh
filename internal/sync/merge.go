@@ -35,8 +35,16 @@ func ApplyConfigItem(item model.ConfigItem, remoteData []byte, strategy model.St
 	}
 
 	// 确保父目录存在
-	if err := os.MkdirAll(filepath.Dir(item.LocalPath), 0755); err != nil {
+	parentPerm := os.FileMode(0755)
+	if isPrivateConfig(item) {
+		parentPerm = 0700
+	}
+	parentDir := filepath.Dir(item.LocalPath)
+	if err := os.MkdirAll(parentDir, parentPerm); err != nil {
 		return fmt.Errorf("创建父目录失败: %w", err)
+	}
+	if isPrivateConfig(item) {
+		_ = os.Chmod(parentDir, 0700)
 	}
 
 	// 如果是目录类型 (如 ~/.config/nvim)，remoteData 是 tar 归档
@@ -65,8 +73,9 @@ func ApplyConfigItem(item model.ConfigItem, remoteData []byte, strategy model.St
 	}
 
 	// 默认追加策略 (StrategyAppend)
-	if strings.HasSuffix(item.LocalPath, ".json") {
-		// JSON 结构化深度合并
+	lowerPath := strings.ToLower(item.LocalPath)
+	if strings.HasSuffix(lowerPath, ".json") || strings.HasSuffix(lowerPath, ".jsonc") {
+		// JSON 结构化深度合并 (支持 Object 与 Array，并兼容带注释的 JSONC)
 		mergedData, err := deepMergeJSON(localData, remoteData)
 		if err == nil {
 			return atomicWriteFile(item.LocalPath, mergedData, os.FileMode(infoMode(item.LocalPath, item.FileMode)))
@@ -87,7 +96,8 @@ func ValidateApplyStrategy(item model.ConfigItem, strategy model.Strategy) error
 	if item.SecretKind != "" && strategy != model.StrategyOverwrite && strategy != model.StrategyReplace {
 		return fmt.Errorf("凭据 %s 只能使用 overwrite 策略", item.RelHomePath)
 	}
-	if strategy != model.StrategyAppend || item.IsDir || strings.HasSuffix(strings.ToLower(item.LocalPath), ".json") {
+	lower := strings.ToLower(item.LocalPath)
+	if strategy != model.StrategyAppend || item.IsDir || strings.HasSuffix(lower, ".json") || strings.HasSuffix(lower, ".jsonc") {
 		return nil
 	}
 	base := strings.ToLower(filepath.Base(item.LocalPath))
@@ -114,8 +124,15 @@ func infoMode(filePath string, fallback uint32) uint32 {
 
 func atomicWriteFile(filePath string, data []byte, mode os.FileMode) error {
 	parent := filepath.Dir(filePath)
-	if err := os.MkdirAll(parent, 0755); err != nil {
+	parentPerm := os.FileMode(0755)
+	if mode.Perm() == 0600 || isPrivateDirPath(parent) {
+		parentPerm = 0700
+	}
+	if err := os.MkdirAll(parent, parentPerm); err != nil {
 		return err
+	}
+	if parentPerm == 0700 {
+		_ = os.Chmod(parent, 0700)
 	}
 	tmp, err := os.CreateTemp(parent, ".config-mesh-write-*")
 	if err != nil {
@@ -162,18 +179,132 @@ func applyMarkedBlock(originalText, syncText string) string {
 	return trimmedOriginal + "\n\n" + syncBlock + "\n"
 }
 
-// deepMergeJSON 针对两个 JSON 文本做 key-value 递归合并
-func deepMergeJSON(localJSON, remoteJSON []byte) ([]byte, error) {
-	var localMap, remoteMap map[string]interface{}
-	if err := json.Unmarshal(localJSON, &localMap); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(remoteJSON, &remoteMap); err != nil {
-		return nil, err
+// cleanJSONC 剔除 JSONC 中的单行注释 //、多行块注释 /*...*/ 以及逗号尾随 (trailing comma)
+func cleanJSONC(data []byte) []byte {
+	var out bytes.Buffer
+	out.Grow(len(data))
+	inString := false
+	escape := false
+	n := len(data)
+
+	for i := 0; i < n; i++ {
+		c := data[i]
+
+		if inString {
+			out.WriteByte(c)
+			if escape {
+				escape = false
+			} else if c == '\\' {
+				escape = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		// 处于字符串外部
+		if c == '"' {
+			inString = true
+			out.WriteByte(c)
+			continue
+		}
+
+		// 单行注释 //
+		if c == '/' && i+1 < n && data[i+1] == '/' {
+			i += 2
+			for i < n && data[i] != '\n' {
+				i++
+			}
+			if i < n {
+				out.WriteByte('\n')
+			}
+			continue
+		}
+
+		// 多行注释 /* ... */
+		if c == '/' && i+1 < n && data[i+1] == '*' {
+			i += 2
+			for i+1 < n && !(data[i] == '*' && data[i+1] == '/') {
+				if data[i] == '\n' {
+					out.WriteByte('\n')
+				}
+				i++
+			}
+			i++ // 跳过 '/'
+			continue
+		}
+
+		// 检查尾随逗号 (trailing comma): 紧随其后的非空白/非注释字符是 '}' 或 ']'
+		if c == ',' {
+			j := i + 1
+			isTrailing := false
+			for j < n {
+				if data[j] == ' ' || data[j] == '\t' || data[j] == '\r' || data[j] == '\n' {
+					j++
+					continue
+				}
+				if data[j] == '/' && j+1 < n && data[j+1] == '/' {
+					j += 2
+					for j < n && data[j] != '\n' {
+						j++
+					}
+					continue
+				}
+				if data[j] == '/' && j+1 < n && data[j+1] == '*' {
+					j += 2
+					for j+1 < n && !(data[j] == '*' && data[j+1] == '/') {
+						j++
+					}
+					j += 2
+					continue
+				}
+				if data[j] == '}' || data[j] == ']' {
+					isTrailing = true
+				}
+				break
+			}
+			if isTrailing {
+				continue // 跳过尾随逗号
+			}
+		}
+
+		out.WriteByte(c)
 	}
 
-	merged := mergeMaps(localMap, remoteMap)
-	return json.MarshalIndent(merged, "", "  ")
+	return out.Bytes()
+}
+
+// deepMergeJSON 针对两个 JSON 文本做结构化合并，兼容 JSONC 注释与末尾逗号，支持 Object 与 Array 合并
+func deepMergeJSON(localJSON, remoteJSON []byte) ([]byte, error) {
+	cleanLocal := cleanJSONC(localJSON)
+	cleanRemote := cleanJSONC(remoteJSON)
+
+	// 1. 优先尝试作为 JSON Object (map) 递归合并
+	var localMap, remoteMap map[string]interface{}
+	errLocalMap := json.Unmarshal(cleanLocal, &localMap)
+	errRemoteMap := json.Unmarshal(cleanRemote, &remoteMap)
+	if errLocalMap == nil && errRemoteMap == nil {
+		merged := mergeMaps(localMap, remoteMap)
+		return json.MarshalIndent(merged, "", "  ")
+	}
+
+	// 2. 尝试作为 JSON Array 合并 (如 VSCode / Cursor keybindings.json)
+	var localArray, remoteArray []interface{}
+	errLocalArr := json.Unmarshal(cleanLocal, &localArray)
+	errRemoteArr := json.Unmarshal(cleanRemote, &remoteArray)
+	if errLocalArr == nil && errRemoteArr == nil {
+		merged := mergeJSONArrays(localArray, remoteArray)
+		return json.MarshalIndent(merged, "", "  ")
+	}
+
+	// 3. 错误诊断
+	if errLocalMap != nil && errLocalArr != nil {
+		return nil, fmt.Errorf("解析本地 JSON 失败: %w", errLocalMap)
+	}
+	if errRemoteMap != nil && errRemoteArr != nil {
+		return nil, fmt.Errorf("解析远端 JSON 失败: %w", errRemoteMap)
+	}
+	return nil, fmt.Errorf("本地与远端 JSON 根数据类型不匹配，无法合并 (Map 与 Array 冲突)")
 }
 
 func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
@@ -191,6 +322,46 @@ func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
 		out[k] = v
 	}
 	return out
+}
+
+func mergeJSONArrays(a, b []interface{}) []interface{} {
+	out := make([]interface{}, 0, len(a)+len(b))
+	seen := make(map[string]bool, len(a)+len(b))
+
+	for _, item := range a {
+		key := canonicalJSONKey(item)
+		seen[key] = true
+		out = append(out, item)
+	}
+	for _, item := range b {
+		key := canonicalJSONKey(item)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func canonicalJSONKey(item interface{}) string {
+	b, err := json.Marshal(item)
+	if err != nil {
+		return fmt.Sprintf("%v", item)
+	}
+	return string(b)
+}
+
+func isPrivateConfig(item model.ConfigItem) bool {
+	if item.SecretKind != "" || item.Category == model.CategorySSH {
+		return true
+	}
+	rel := filepath.ToSlash(item.RelHomePath)
+	return strings.HasPrefix(rel, ".ssh/") || strings.HasPrefix(rel, ".aws/")
+}
+
+func isPrivateDirPath(dirPath string) bool {
+	clean := filepath.ToSlash(dirPath)
+	return strings.HasSuffix(clean, "/.ssh") || strings.HasSuffix(clean, "/.aws")
 }
 
 // CreateTarArchive 将本地目录打包为 tar 字节切片 (自动跳过大缓存/临时文件、Socket 与特殊文件，妥善处理软链接与目录)

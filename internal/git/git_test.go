@@ -258,3 +258,28 @@ func TestListHostSnapshotsIgnoresSymlinkManifest(t *testing.T) {
 		t.Fatalf("软链接 Manifest 不得成为可选快照: %+v", snapshots)
 	}
 }
+
+func TestListHostSnapshotsIgnoresHiddenAndStagingDirs(t *testing.T) {
+	repo := t.TempDir()
+	validDir := filepath.Join(repo, "hosts", "host-valid")
+	stagingDir := filepath.Join(repo, "hosts", ".staging-temp")
+	prevDir := filepath.Join(repo, "hosts", ".previous-old")
+
+	for _, d := range []string{validDir, stagingDir, prevDir} {
+		if err := os.MkdirAll(d, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "manifest.json.age"), []byte("valid-age-data"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	snapshots, err := ListHostSnapshots(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 || snapshots[0].SnapshotID != "host-valid" {
+		t.Fatalf("必须忽略以 . 开头的隐藏/暂存目录，实际: %+v", snapshots)
+	}
+}
+

@@ -28,10 +28,20 @@ import (
 )
 
 var repoComponentPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
-var yesFlag bool
+var (
+	yesFlag      bool
+	snapshotFlag string
+	downloadFlag bool
+	uploadFlag   bool
+	strategyFlag string
+)
 
 func init() {
 	applyCmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "非交互模式：自动采用默认推荐配置执行同步，跳过 TUI 确认")
+	applyCmd.Flags().StringVarP(&snapshotFlag, "snapshot", "s", "", "指定要拉取的云端主机快照 ID (如 xf-macbook-air-13864baa6f97)")
+	applyCmd.Flags().BoolVar(&downloadFlag, "download", false, "强制以从云端拉取模式运行 (下载并应用远端配置)")
+	applyCmd.Flags().BoolVar(&uploadFlag, "upload", false, "强制以向云端上传模式运行 (备份并推送本机配置)")
+	applyCmd.Flags().StringVar(&strategyFlag, "strategy", "", "指定配置合并策略 (overwrite / append / skip)")
 }
 
 var applyCmd = &cobra.Command{
@@ -124,58 +134,153 @@ var applyCmd = &cobra.Command{
 			return fmt.Errorf("读取快照列表失败: %w", err)
 		}
 
-		mode := "upload" // upload 或 download
-		selectedSnapshot := ""
-		if len(snapshots) > 0 {
-			fmt.Printf("\n:: 检测到云端仓库已存在 %d 个主机配置快照:\n", len(snapshots))
-			defaultDownloadIndex := -1
-			for i, s := range snapshots {
-				created := "时间未知"
-				if !s.CreatedAt.IsZero() {
-					created = s.CreatedAt.Local().Format("2006-01-02 15:04:05")
-				}
-				ownership := "设备未知"
-				isLocal := s.SnapshotID == listState.UploadSnapshotID ||
-					(s.DeviceID != "" && listState.DeviceID != "" && s.DeviceID == listState.DeviceID)
-				if isLocal {
-					ownership = "本机"
-				} else if s.DeviceID != "" {
-					ownership = "其他设备"
-					if defaultDownloadIndex < 0 {
-						defaultDownloadIndex = i
-					}
-				}
-				fmt.Printf("  [%d] [%s] %s  (%s)\n", i+1, ownership, s.SnapshotID, created)
+		if downloadFlag && uploadFlag {
+			return fmt.Errorf("--download 和 --upload 不能同时指定")
+		}
+		if strategyFlag != "" {
+			validStrategies := map[string]bool{
+				string(model.StrategyOverwrite): true,
+				string(model.StrategyAppend):    true,
+				string(model.StrategySkip):      true,
 			}
-			if defaultDownloadIndex >= 0 {
-				mode = "download"
+			if !validStrategies[strings.ToLower(strings.TrimSpace(strategyFlag))] {
+				return fmt.Errorf("无效的策略参数: %q (可选: overwrite, append, skip)", strategyFlag)
+			}
+		}
+
+		defaultDownloadIndex := -1
+		options := make([]tui.SnapshotOption, len(snapshots))
+		for i, s := range snapshots {
+			isLocal := (listState.UploadSnapshotID != "" && s.SnapshotID == listState.UploadSnapshotID) ||
+				(listState.DeviceID != "" && s.DeviceID != "" && s.DeviceID == listState.DeviceID)
+			ownership := "其他设备"
+			if isLocal {
+				ownership = "本机"
+			} else if defaultDownloadIndex < 0 {
+				defaultDownloadIndex = i
+			}
+			options[i] = tui.SnapshotOption{
+				SnapshotID: s.SnapshotID,
+				Hostname:   s.Hostname,
+				DeviceID:   s.DeviceID,
+				Ownership:  ownership,
+				CreatedAt:  s.CreatedAt,
+			}
+		}
+		if defaultDownloadIndex < 0 {
+			defaultDownloadIndex = 0
+		}
+
+		if snapshotFlag != "" {
+			found := false
+			for _, s := range snapshots {
+				if s.SnapshotID == snapshotFlag {
+					found = true
+					break
+				}
+			}
+			if !found {
+				var available []string
+				for _, s := range snapshots {
+					available = append(available, s.SnapshotID)
+				}
+				if len(available) == 0 {
+					return fmt.Errorf("指定的快照不存在: %q（云端暂无可用快照）", snapshotFlag)
+				}
+				return fmt.Errorf("指定的快照不存在: %q；云端可用快照: %s", snapshotFlag, strings.Join(available, ", "))
+			}
+		}
+
+		mode := "upload"
+		if snapshotFlag != "" {
+			mode = "download"
+		} else if downloadFlag {
+			mode = "download"
+			if len(snapshots) == 0 {
+				return fmt.Errorf("云端仓库暂无任何主机快照可供拉取，请先在一台设备上执行同步上传")
+			}
+		} else if uploadFlag {
+			mode = "upload"
+		} else if len(snapshots) > 0 {
+			// 默认操作判定：若本机未曾上传过或存在其他设备快照，推荐从云端拉取；否则推荐更新上传
+			defaultOperation := "upload"
+			defaultOpIndex := 1
+			hasRemoteSnapshots := len(snapshots) > 0 && defaultDownloadIndex >= 0 && options[defaultDownloadIndex].Ownership == "其他设备"
+			if listState.UploadSnapshotID == "" || hasRemoteSnapshots {
+				defaultOperation = "download"
+				defaultOpIndex = 0
 			}
 
 			if !yesFlag {
-				fmt.Println("\n请选择本次执行的操作：")
-				fmt.Println("  1. 从云端拉取配置并合并到当前设备 (推荐用于新设备同步)")
-				fmt.Println("  2. 将当前设备配置更新到本机固定目录（仅上传变化项）")
-				defaultOperation := "2"
-				if defaultDownloadIndex >= 0 {
-					defaultOperation = "1"
-				}
-				fmt.Printf("请输入序号 [1/2] (默认 %s): ", defaultOperation)
+				isTTY := term.IsTerminal(int(os.Stdin.Fd()))
+				if isTTY {
+					selectedMode, opErr := tui.RunOperationSelector(":: 请选择本次执行的操作", tui.DefaultOperationOptions(), defaultOpIndex)
+					if opErr != nil {
+						return opErr
+					}
+					mode = selectedMode
+				} else {
+					fmt.Println("\n请选择本次执行的操作：")
+					fmt.Println("  1. 从云端拉取配置并合并到当前设备 (推荐用于新设备同步)")
+					fmt.Println("  2. 将当前设备配置更新到本机固定目录（仅上传变化项）")
+					defNum := "1"
+					if defaultOperation == "upload" {
+						defNum = "2"
+					}
+					fmt.Printf("请输入序号 [1/2] (默认 %s): ", defNum)
 
-				scannerInput := bufio.NewScanner(os.Stdin)
-				if scannerInput.Scan() {
-					input := strings.TrimSpace(scannerInput.Text())
-					if input == "2" {
-						mode = "upload"
-					} else if input == "1" {
-						mode = "download"
+					scannerInput := bufio.NewScanner(os.Stdin)
+					if scannerInput.Scan() {
+						input := strings.TrimSpace(scannerInput.Text())
+						if input == "2" {
+							mode = "upload"
+						} else if input == "1" {
+							mode = "download"
+						} else if input == "" {
+							mode = defaultOperation
+						} else {
+							return fmt.Errorf("无效的操作序号: %q", input)
+						}
 					}
 				}
-				if mode == "download" {
-					if defaultDownloadIndex < 0 {
-						defaultDownloadIndex = 0
+			} else {
+				mode = defaultOperation
+			}
+		}
+
+		// 6. 分支执行
+		if mode == "download" {
+			if len(snapshots) == 0 {
+				return fmt.Errorf("云端仓库暂无任何主机快照可供拉取")
+			}
+
+			selectedSnapshot := ""
+			if snapshotFlag != "" {
+				selectedSnapshot = snapshotFlag
+			} else if !yesFlag {
+				isTTY := term.IsTerminal(int(os.Stdin.Fd()))
+				if isTTY {
+					selectedIndex, selErr := tui.RunSnapshotSelector(":: 请选择要拉取同步的云端主机快照", options, defaultDownloadIndex)
+					if selErr != nil {
+						return selErr
+					}
+					selectedSnapshot = snapshots[selectedIndex].SnapshotID
+				} else {
+					fmt.Printf("\n:: 检测到云端仓库已存在 %d 个主机配置快照:\n", len(snapshots))
+					for i, opt := range options {
+						created := "时间未知"
+						if !opt.CreatedAt.IsZero() {
+							created = opt.CreatedAt.Local().Format("2006-01-02 15:04:05")
+						}
+						hostInfo := ""
+						if opt.Hostname != "" {
+							hostInfo = fmt.Sprintf(" (主机: %s)", opt.Hostname)
+						}
+						fmt.Printf("  [%d] [%s] %s%s  (%s)\n", i+1, opt.Ownership, opt.SnapshotID, hostInfo, created)
 					}
 					fmt.Printf("请选择要拉取的快照 [1-%d] (默认 %d): ", len(snapshots), defaultDownloadIndex+1)
 					selectedIndex := defaultDownloadIndex
+					scannerInput := bufio.NewScanner(os.Stdin)
 					if scannerInput.Scan() {
 						input := strings.TrimSpace(scannerInput.Text())
 						if input != "" {
@@ -189,18 +294,12 @@ var applyCmd = &cobra.Command{
 					selectedSnapshot = snapshots[selectedIndex].SnapshotID
 				}
 			} else {
-				if mode == "download" {
-					if defaultDownloadIndex < 0 {
-						defaultDownloadIndex = 0
-					}
-					selectedSnapshot = snapshots[defaultDownloadIndex].SnapshotID
-				}
+				selectedSnapshot = snapshots[defaultDownloadIndex].SnapshotID
+				fmt.Printf(":: 自动选择云端快照 (非交互默认): %s\n", selectedSnapshot)
 			}
-		}
 
-		// 6. 分支执行
-		if mode == "download" {
-			return handleDownload(repoDir, gitMgr, selectedSnapshot, vaultID)
+			fmt.Printf(":: 选定同步快照: %s\n", tui.SelectedStyle.Render(selectedSnapshot))
+			return handleDownload(repoDir, gitMgr, selectedSnapshot, vaultID, strategyFlag)
 		}
 
 		return handleUpload(repoDir, gitMgr, vaultID)
@@ -600,7 +699,7 @@ func uploadConfigItems(
 }
 
 // handleDownload 从指定快照挑选配置、前置备份、解密并按策略合并
-func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName string, vaultID string) error {
+func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName string, vaultID string, strategyOverride string) error {
 	if snapshotName == "" {
 		return fmt.Errorf("未选择任何远端快照")
 	}
@@ -707,13 +806,17 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 		}
 
 		// 2. 先选择策略并验证所有项是否支持，取消不得默认改写配置。
-		strategy, err = tui.RunStrategySelector()
-		if err != nil {
-			return err
-		}
-		if strategy == model.StrategySkip {
-			fmt.Println("[*] 已选择跳过，本地配置和同步状态均未修改。")
-			return nil
+		if strategyOverride != "" {
+			strategy = model.Strategy(strings.ToLower(strings.TrimSpace(strategyOverride)))
+		} else {
+			strategy, err = tui.RunStrategySelector()
+			if err != nil {
+				return err
+			}
+			if strategy == model.StrategySkip {
+				fmt.Println("[*] 已选择跳过，本地配置和同步状态均未修改。")
+				return nil
+			}
 		}
 	} else {
 		for _, item := range remoteManifest.Items {
@@ -725,7 +828,11 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 			fmt.Println("[*] 未选择任何配置项，同步已取消。")
 			return nil
 		}
-		strategy = model.StrategyOverwrite
+		if strategyOverride != "" {
+			strategy = model.Strategy(strings.ToLower(strings.TrimSpace(strategyOverride)))
+		} else {
+			strategy = model.StrategyOverwrite
+		}
 		fmt.Printf(":: 应用策略 (非交互默认): %s\n", strategy)
 	}
 	for _, item := range toApply {
@@ -769,11 +876,13 @@ func handleDownload(repoDir string, gitMgr *git.RepositoryManager, snapshotName 
 		payloads = append(payloads, decryptedConfig{item: item, data: plainData})
 	}
 
-	// 4. 备份包含“原本不存在”记录，使回滚可删除本次新建项。
+	// 4. 备份包含“原本不存在”记录，使回滚可删除本次新建项，同时备份 LocalState 状态库基线。
 	bm, err := sync.NewBackupManager()
 	if err != nil {
 		return err
 	}
+	bm.StateFilePath = stateMgr.StateFilePath
+	bm.VaultID = vaultID
 	backupManifest, err := bm.BackupSelectedFiles(toApply)
 	if err != nil {
 		return fmt.Errorf("前置快照备份失败: %w", err)

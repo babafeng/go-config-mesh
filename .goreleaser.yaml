@@ -1,0 +1,60 @@
+# .goreleaser.yaml
+# Reference: https://goreleaser.com
+version: 2
+
+project_name: config-mesh
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: config-mesh
+    main: ./cmd/config-mesh
+    binary: config-mesh
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+brews:
+  - name: config-mesh
+    repository:
+      owner: babafeng
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/babafeng/go-config-mesh"
+    description: "安全、轻量的 macOS 开发环境配置端到端加密同步工具"
+    license: "Unlicense"
+    test: |
+      system "#{bin}/config-mesh", "version"
