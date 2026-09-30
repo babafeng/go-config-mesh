@@ -194,6 +194,50 @@ func TestScanner(t *testing.T) {
 	}
 }
 
+func TestScannerAntigravityCLIConfigOnlyWhenPresent(t *testing.T) {
+	home := t.TempDir()
+	cliDir := filepath.Join(home, ".gemini", "antigravity-cli")
+	if err := os.MkdirAll(cliDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cliDir, "settings.json"), []byte(`{"colorScheme":"dark"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cliDir, "mcp_config.json"), []byte(`{"mcpServers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(wantKeybindings bool) {
+		t.Helper()
+		items, err := (&Scanner{HomeDir: home}).Scan()
+		if err != nil {
+			t.Fatal(err)
+		}
+		byID := make(map[string]model.ConfigItem)
+		for _, item := range items {
+			byID[item.ID] = item
+		}
+		settings, ok := byID["ai_antigravity_cli_settings"]
+		if !ok || !settings.Selected || !settings.Recommended || settings.RelHomePath != ".gemini/antigravity-cli/settings.json" {
+			t.Fatalf("CLI settings 预设不正确: %+v", settings)
+		}
+		mcp, ok := byID["ai_antigravity_cli_mcp"]
+		if !ok || mcp.Selected || mcp.Recommended {
+			t.Fatalf("CLI MCP 配置应存在但默认不勾选: %+v", mcp)
+		}
+		_, foundKeybindings := byID["ai_antigravity_cli_keybindings"]
+		if foundKeybindings != wantKeybindings {
+			t.Fatalf("CLI keybindings 存在状态错误: got %v, want %v", foundKeybindings, wantKeybindings)
+		}
+	}
+
+	check(false)
+	if err := os.WriteFile(filepath.Join(cliDir, "keybindings.json"), []byte(`{"submit":["enter"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+}
+
 func TestScannerIncludesExplicitCredentialItems(t *testing.T) {
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0700); err != nil {

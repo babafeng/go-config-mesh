@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -111,5 +113,39 @@ func TestCheckboxCategoryEntryTogglesWholeCategory(t *testing.T) {
 	m = updateCheckbox(t, m, tea.KeyMsg{Type: tea.KeySpace})
 	if !strings.Contains(ansi.Strip(m.View()), "[-]  Git & 开发  (2/3)") {
 		t.Fatalf("分类半选状态未正确渲染:\n%s", ansi.Strip(m.View()))
+	}
+}
+
+func TestCheckboxDirectoryPreviewShowsPackDecisionsAndReturns(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"theme":"dark"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(`{"account":"local"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	item := model.ConfigItem{ID: "ai_gemini_config", Name: "~/.gemini/config", LocalPath: dir,
+		IsDir: true, Exists: true, Category: model.CategoryAI, Selected: true}
+	m := NewCheckboxModel("本地配置", []model.ConfigItem{item})
+	m.PreviewEnabled = true
+	m.Cursor = 1 // 分类标题后面的目录项
+	m = updateCheckbox(t, m, tea.WindowSizeMsg{Width: 80, Height: 10})
+	m = updateCheckbox(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if m.Preview == nil {
+		t.Fatal("按 p 后未打开目录预览")
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "[收录] settings.json") || !strings.Contains(view, "[跳过] auth.json (敏感路径)") {
+		t.Fatalf("预览未展示打包决策:\n%s", view)
+	}
+	m = updateCheckbox(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.Preview != nil || m.Canceled || !m.Items[0].Selected {
+		t.Fatalf("Esc 应返回勾选列表且保留选择: %+v", m)
+	}
+
+	m.PreviewEnabled = false
+	m = updateCheckbox(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if m.Preview != nil {
+		t.Fatal("未启用目录预览的列表不应读取本地路径")
 	}
 }

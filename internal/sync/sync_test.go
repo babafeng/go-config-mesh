@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"encoding/pem"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -338,6 +339,73 @@ func TestTarArchiveWithSymlinksAndSockets(t *testing.T) {
 	// 验证 socket 文件被安全忽略，没有被解压出来
 	if _, err := os.Stat(filepath.Join(dstDir, "agent.sock")); err == nil {
 		t.Errorf("Socket 文件本应被忽略")
+	}
+}
+
+func TestPreviewTarArchiveMatchesPackedEntriesAndExplainsSkips(t *testing.T) {
+	srcDir := t.TempDir()
+	write := func(name, content string) {
+		t.Helper()
+		path := filepath.Join(srcDir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("settings.json", `{"theme":"dark"}`)
+	write("skills/demo/SKILL.md", "# Demo")
+	write("cache/generated.json", `{"cached":true}`)
+	write("auth.json", `{"account":"local"}`)
+	write("mcp_config.json", `{"token":"literal-production-secret"}`)
+
+	preview, err := PreviewTarArchive(srcDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := CreateTarArchive(srcDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	packed := make(map[string]bool)
+	tr := tar.NewReader(bytes.NewReader(archive))
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		packed[header.Name] = true
+	}
+
+	wantSkipped := map[string]string{
+		"auth.json":       "敏感路径",
+		"cache":           "忽略规则",
+		"mcp_config.json": "内容检测到凭据",
+	}
+	for _, entry := range preview.Entries {
+		if entry.Included != packed[entry.Path] {
+			t.Errorf("预览与 tar 不一致: %+v", entry)
+		}
+		if reason, ok := wantSkipped[entry.Path]; ok {
+			if entry.Included || entry.Reason != reason {
+				t.Errorf("跳过原因不正确: %+v", entry)
+			}
+			delete(wantSkipped, entry.Path)
+		}
+	}
+	if len(wantSkipped) != 0 {
+		t.Fatalf("预览缺少跳过条目: %v", wantSkipped)
+	}
+	if preview.IncludedCount != len(packed) || preview.SkippedCount != 3 {
+		t.Fatalf("预览汇总不正确: %+v", preview)
+	}
+	if packed["cache/generated.json"] || packed["auth.json"] || packed["mcp_config.json"] {
+		t.Fatalf("tar 包含应跳过的文件: %v", packed)
 	}
 }
 

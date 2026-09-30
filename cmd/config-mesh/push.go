@@ -143,7 +143,7 @@ var pushCmd = &cobra.Command{
 				selectedItems = append(selectedItems, it)
 			}
 		} else {
-			selectedItems, err = tui.RunCheckboxTUI(":: 选择需要加密并上传同步的本地配置项", items)
+			selectedItems, err = tui.RunCheckboxTUIWithDirectoryPreview(":: 选择需要加密并上传同步的本地配置项", items)
 			if err != nil {
 				return err
 			}

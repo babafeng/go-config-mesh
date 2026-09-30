@@ -42,6 +42,9 @@
 # 1. 首次运行：一键认证、建仓、扫描、加密并同步（可选 -y 跳过交互）
 config-mesh apply <your-github-username> [-y]
 
+# 可先只扫描本地配置；在列表中选中目录项后按 p 查看打包预览
+config-mesh scan
+
 # 2. 查看当前配置网格状态与哈希差异
 config-mesh status
 
@@ -57,8 +60,10 @@ config-mesh apply <your-github-username>
 
 当前受控范围：
 
-- AI 工具：Claude Code（含 `~/.claude.json`、`CLAUDE.md`、`commands/` 及所有 `settings.json*` 厂商配置）、Codex、Gemini、Antigravity、Cursor 等。
+- AI 工具：Claude Code（含 `~/.claude.json`、`CLAUDE.md`、`commands/` 及所有 `settings.json*` 厂商配置）、Codex、Gemini、Antigravity IDE / CLI、Cursor 等。Antigravity CLI 扫描 `~/.gemini/antigravity-cli/settings.json`、存在时的 `keybindings.json`，以及默认不勾选的 `mcp_config.json`。
 - SSH：`~/.ssh/` 下可解析的私钥及对应 `.pub` 文件；不包含 `authorized_keys`、`known_hosts`。
 - AWS：`~/.aws/credentials`（官方默认共享凭据文件）。
 - Alibaba Cloud CLI：`~/.aliyun/config.json`（官方 macOS/Linux 配置及凭据文件）。
 - 已知单文件配置：例如 `~/.zshrc` 检测到 Token/密码时，以 `detected_config_secret` 类型加密同步并强制权限为 `0600`。
+
+在本地扫描或交互式上传的列表中，选中 `~/.gemini/config` 等目录项后按 `p`，可查看当前会收入归档的条目、跳过的路径及原因。跳过目录以目录路径显示，表示其全部子项都被跳过；按 `Esc` 返回勾选列表。实际上传时会重新读取文件，若文件在预览后变化，最终结果以上传时的校验为准。

@@ -6,19 +6,25 @@ import (
 
 	"config-mesh/internal/model"
 	"config-mesh/internal/scanner"
+	meshsync "config-mesh/internal/sync"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
 // CheckboxModel 复选框 TUI 数据模型
 type CheckboxModel struct {
-	Title     string
-	Items     []model.ConfigItem
-	Cursor    int
-	Confirmed bool
-	Canceled  bool
-	Width     int
-	Height    int
+	Title          string
+	Items          []model.ConfigItem
+	Cursor         int
+	Confirmed      bool
+	Canceled       bool
+	Width          int
+	Height         int
+	PreviewEnabled bool
+	Preview        *meshsync.ArchivePreview
+	PreviewName    string
+	PreviewError   string
+	PreviewCursor  int
 }
 
 // NewCheckboxModel 创建复选框模型
@@ -41,6 +47,13 @@ func (m CheckboxModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Height = msg.Height
 
 	case tea.KeyMsg:
+		if m.Preview != nil {
+			m.updatePreview(msg.String())
+			if m.Canceled {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		entryCount := len(m.entries())
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
@@ -92,6 +105,9 @@ func (m CheckboxModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case " ":
 			m.toggleFocusedEntry()
 
+		case "p":
+			m.openDirectoryPreview()
+
 		case "a": // 全选
 			for i := range m.Items {
 				m.Items[i].Selected = true
@@ -114,6 +130,62 @@ func (m CheckboxModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *CheckboxModel) openDirectoryPreview() {
+	if !m.PreviewEnabled {
+		return
+	}
+	entries := m.entries()
+	if m.Cursor < 0 || m.Cursor >= len(entries) || entries[m.Cursor].itemIndex < 0 {
+		return
+	}
+	item := m.Items[entries[m.Cursor].itemIndex]
+	if !item.IsDir || !item.Exists || item.Deleted {
+		return
+	}
+	preview, err := meshsync.PreviewTarArchive(item.LocalPath)
+	m.Preview = &preview
+	m.PreviewName = item.Name
+	m.PreviewCursor = 0
+	m.PreviewError = ""
+	if err != nil {
+		m.PreviewError = err.Error()
+	}
+}
+
+func (m *CheckboxModel) updatePreview(key string) {
+	count := len(m.Preview.Entries)
+	switch key {
+	case "ctrl+c":
+		m.Canceled = true
+	case "q", "esc", "p", "enter":
+		m.Preview = nil
+	case "up", "k":
+		if m.PreviewCursor > 0 {
+			m.PreviewCursor--
+		}
+	case "down", "j":
+		if m.PreviewCursor < count-1 {
+			m.PreviewCursor++
+		}
+	case "home", "g":
+		m.PreviewCursor = 0
+	case "end", "G":
+		if count > 0 {
+			m.PreviewCursor = count - 1
+		}
+	case "pgup":
+		m.PreviewCursor -= m.pageSize()
+		if m.PreviewCursor < 0 {
+			m.PreviewCursor = 0
+		}
+	case "pgdown":
+		m.PreviewCursor += m.pageSize()
+		if m.PreviewCursor >= count && count > 0 {
+			m.PreviewCursor = count - 1
+		}
+	}
 }
 
 func (m CheckboxModel) pageSize() int {
@@ -328,6 +400,9 @@ func (m CheckboxModel) View() string {
 	if m.Canceled {
 		return DimStyle.Render("操作已取消。\n")
 	}
+	if m.Preview != nil {
+		return m.previewView()
+	}
 
 	showTitle, showSubtitle, showStats, showHelp := m.layoutFlags()
 	lines := make([]string, 0, m.Height)
@@ -369,7 +444,11 @@ func (m CheckboxModel) View() string {
 		))
 	}
 	if showHelp {
-		lines = append(lines, HelpStyle.MarginTop(0).Render("[空格] 选择 • [a/n/i] 全选/全不选/反选 • [Home/End] 首尾 • [Enter] 确认 • [q/Esc] 退出"))
+		help := "[空格] 选择 • [a/n/i] 全选/全不选/反选 • [Home/End] 首尾 • [Enter] 确认 • [q/Esc] 退出"
+		if m.PreviewEnabled {
+			help = "[空格] 选择 • [p] 预览目录 • [a/n/i] 全选/全不选/反选 • [Home/End] 首尾 • [Enter] 确认 • [q/Esc] 退出"
+		}
+		lines = append(lines, HelpStyle.MarginTop(0).Render(help))
 	}
 
 	for i := range lines {
@@ -378,13 +457,90 @@ func (m CheckboxModel) View() string {
 	return strings.Join(lines, "\n")
 }
 
+func (m CheckboxModel) previewView() string {
+	showTitle, showSubtitle, showStats, showHelp := m.layoutFlags()
+	lines := make([]string, 0, m.Height)
+	if showTitle {
+		title := "目录打包预览: " + m.PreviewName
+		if m.PreviewError != "" {
+			title = "目录打包预览（未完成）: " + m.PreviewName
+		}
+		lines = append(lines, TitleStyle.MarginBottom(0).Render(title))
+	}
+	if showSubtitle {
+		lines = append(lines, SubtitleStyle.MarginBottom(0).Render("跳过目录时其全部子项也会跳过；预览不上传文件。"))
+	}
+	entries := m.Preview.Entries
+	height := m.listViewportHeight()
+	top := m.PreviewCursor - height + 1
+	if top < 0 {
+		top = 0
+	}
+	bottom := top + height
+	if bottom > len(entries) {
+		bottom = len(entries)
+	}
+	for i := top; i < bottom; i++ {
+		entry := entries[i]
+		cursor := "  "
+		if i == m.PreviewCursor {
+			cursor = CursorStyle.Render("> ")
+		}
+		path := entry.Path
+		if entry.IsDir {
+			path += "/"
+		}
+		if entry.Included {
+			label := SelectedStyle.Render("[收录]")
+			if entry.Size > 0 {
+				path += " (" + scanner.FormatSize(entry.Size) + ")"
+			}
+			if entry.Reason != "" {
+				path += " (" + entry.Reason + ")"
+			}
+			lines = append(lines, cursor+label+" "+path)
+		} else {
+			lines = append(lines, cursor+DimStyle.Render("[跳过] "+path+" ("+entry.Reason+")"))
+		}
+	}
+	if len(entries) == 0 {
+		lines = append(lines, DimStyle.Render("目录中没有可打包条目"))
+	}
+	if showStats {
+		stats := fmt.Sprintf("收录: %d 项/%s • 跳过: %d 项", m.Preview.IncludedCount,
+			scanner.FormatSize(m.Preview.IncludedBytes), m.Preview.SkippedCount)
+		if m.PreviewError != "" {
+			stats = "预览未完成: " + m.PreviewError
+		}
+		lines = append(lines, stats)
+	}
+	if showHelp {
+		lines = append(lines, HelpStyle.MarginTop(0).Render("[↑/↓] 浏览 • [PgUp/PgDn] 翻页 • [p/Enter/q/Esc] 返回"))
+	}
+	for i := range lines {
+		lines[i] = m.truncateLine(lines[i])
+	}
+	return strings.Join(lines, "\n")
+}
+
 // RunCheckboxTUI 启动复选框 TUI 交互并返回用户选择的结果
 func RunCheckboxTUI(title string, items []model.ConfigItem) ([]model.ConfigItem, error) {
+	return runCheckboxTUI(title, items, false)
+}
+
+// RunCheckboxTUIWithDirectoryPreview 为本地扫描/上传列表启用按 p 预览目录打包内容。
+func RunCheckboxTUIWithDirectoryPreview(title string, items []model.ConfigItem) ([]model.ConfigItem, error) {
+	return runCheckboxTUI(title, items, true)
+}
+
+func runCheckboxTUI(title string, items []model.ConfigItem, previewEnabled bool) ([]model.ConfigItem, error) {
 	if len(items) == 0 {
 		return items, nil
 	}
 
-	p := tea.NewProgram(NewCheckboxModel(title, items))
+	checkbox := NewCheckboxModel(title, items)
+	checkbox.PreviewEnabled = previewEnabled
+	p := tea.NewProgram(checkbox)
 	m, err := p.Run()
 	if err != nil {
 		return nil, fmt.Errorf("启动 TUI 界面失败: %w", err)

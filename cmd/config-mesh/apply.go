@@ -337,7 +337,7 @@ func handleUpload(repoDir string, gitMgr *git.RepositoryManager, vaultID string)
 	var selectedItems []model.ConfigItem
 	if !yesFlag {
 		var err error
-		selectedItems, err = tui.RunCheckboxTUI(":: 选择需要加密并上传同步的本地配置项", items)
+		selectedItems, err = tui.RunCheckboxTUIWithDirectoryPreview(":: 选择需要加密并上传同步的本地配置项", items)
 		if err != nil {
 			return err
 		}

@@ -364,8 +364,51 @@ func isPrivateDirPath(dirPath string) bool {
 	return strings.HasSuffix(clean, "/.ssh") || strings.HasSuffix(clean, "/.aws")
 }
 
+// ArchivePreviewEntry 记录一次目录打包决策；跳过的目录代表其所有子项也被跳过。
+type ArchivePreviewEntry struct {
+	Path     string
+	Included bool
+	Reason   string
+	Size     int64
+	IsDir    bool
+}
+
+// ArchivePreview 与真实打包共用遍历逻辑，仅记录路径和决策，不包含文件内容。
+type ArchivePreview struct {
+	Entries       []ArchivePreviewEntry
+	IncludedCount int
+	SkippedCount  int
+	IncludedBytes int64
+}
+
+func (p *ArchivePreview) add(path string, included bool, reason string, size int64, isDir bool) {
+	if p == nil {
+		return
+	}
+	p.Entries = append(p.Entries, ArchivePreviewEntry{
+		Path: filepath.ToSlash(path), Included: included, Reason: reason, Size: size, IsDir: isDir,
+	})
+	if included {
+		p.IncludedCount++
+		p.IncludedBytes += size
+	} else {
+		p.SkippedCount++
+	}
+}
+
+// PreviewTarArchive 使用与 CreateTarArchive 相同的过滤和校验流程生成预览。
+func PreviewTarArchive(srcDir string) (ArchivePreview, error) {
+	var preview ArchivePreview
+	_, err := createTarArchive(srcDir, &preview)
+	return preview, err
+}
+
 // CreateTarArchive 将本地目录打包为 tar 字节切片 (自动跳过大缓存/临时文件、Socket 与特殊文件，妥善处理软链接与目录)
 func CreateTarArchive(srcDir string) ([]byte, error) {
+	return createTarArchive(srcDir, nil)
+}
+
+func createTarArchive(srcDir string, preview *ArchivePreview) ([]byte, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	var totalSize int64
@@ -381,7 +424,15 @@ func CreateTarArchive(srcDir string) ([]byte, error) {
 			return nil
 		}
 
-		if scanner.IsSensitiveFile(path) || scanner.ShouldIgnorePath(relPath) {
+		if scanner.IsSensitiveFile(path) {
+			preview.add(relPath, false, "敏感路径", 0, info.IsDir())
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if scanner.ShouldIgnorePath(relPath) {
+			preview.add(relPath, false, "忽略规则", 0, info.IsDir())
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -398,6 +449,7 @@ func CreateTarArchive(srcDir string) ([]byte, error) {
 
 		// 1. 跳过 Socket、Named Pipe、设备等特殊文件
 		if mode&(os.ModeSocket|os.ModeNamedPipe|os.ModeDevice|os.ModeIrregular) != 0 {
+			preview.add(relPath, false, "特殊文件", 0, false)
 			return nil
 		}
 		// 2. 软链接处理
@@ -410,6 +462,7 @@ func CreateTarArchive(srcDir string) ([]byte, error) {
 			linkTarget = target
 			if err := validateTarLink(filepath.ToSlash(relPath), linkTarget); err != nil {
 				// 绝对路径或越界软链接在其他设备上既不可移植又不安全，不写入归档。
+				preview.add(relPath, false, "越界或绝对路径软链接", 0, false)
 				return nil
 			}
 		}
@@ -441,12 +494,20 @@ func CreateTarArchive(srcDir string) ([]byte, error) {
 				return fmt.Errorf("打包期间文件发生变化: %s", path)
 			}
 			if scanner.ContainsSensitiveContent(fileData) {
+				preview.add(relPath, false, "内容检测到凭据", 0, false)
 				return nil
 			}
 			totalSize += lInfo.Size()
 		}
 		if err := tw.WriteHeader(header); err != nil {
 			return err
+		}
+		if mode.IsDir() {
+			preview.add(relPath, true, "", 0, true)
+		} else if mode&os.ModeSymlink != 0 {
+			preview.add(relPath, true, "软链接", 0, false)
+		} else {
+			preview.add(relPath, true, "", int64(len(fileData)), false)
 		}
 
 		// 如果是软链接或目录，写完 Header 后直接跳过文件内容复制
